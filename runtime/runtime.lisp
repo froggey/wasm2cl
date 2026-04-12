@@ -235,6 +235,9 @@
     (setf (wasm-context-memory context) new-memory)
     (truncate current +wasm-page-size+)))
 
+(defun memory-size (context)
+  (truncate (length (wasm-context-memory context)) +wasm-page-size+))
+
 (defmacro define-conditional (name args op)
   (let ((fused-name (intern (format nil "~A.FUSED" name)
                             (symbol-package name))))
