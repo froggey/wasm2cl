@@ -267,10 +267,10 @@
   (setf (nibbles:ub32ref/le (wasm-context-memory context) address) value))
 
 (defun i32store8 (context address value)
-  (setf (aref (wasm-context-memory context) address) value))
+  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value)))
 
 (defun i32store16 (context address value)
-  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) value))
+  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value)))
 
 (defun i64load (context address)
   (nibbles:ub64ref/le (wasm-context-memory context) address))
@@ -297,13 +297,13 @@
   (setf (nibbles:ub64ref/le (wasm-context-memory context) address) value))
 
 (defun i64store8 (context address value)
-  (setf (aref (wasm-context-memory context) address) value))
+  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value)))
 
 (defun i64store16 (context address value)
-  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) value))
+  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value)))
 
 (defun i64store32 (context address value)
-  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) value))
+  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) (ldb (byte 32 0) value)))
 
 (define-conditional i32eqz (x) (eql (the i32 x) 0))
 (define-conditional i32eq (x y) (eql (the i32 x) (the i32 y)))
