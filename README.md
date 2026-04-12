@@ -16,5 +16,5 @@ cargo run --release -- target/wasm32-wasip1/release/wasm2cl.wasm :wasm2cl-wasm2c
 ```lisp
 ;; Make sure runtime/runtime.lisp and runtime/wasip1.lisp are loaded
 (load (compile-file "out.lisp"))
-(wasm2cl-wasip1:run :wasm2cl-wasm2cl-sys '())
+(wasm2cl-wasip1:run :wasm2cl-wasm2cl-sys "")
 ```
