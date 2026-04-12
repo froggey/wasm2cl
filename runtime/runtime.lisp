@@ -46,6 +46,7 @@
            #:i32rotr
            #:i32clz
            #:i32ctz
+           #:i32popcnt
            #:i32wrapi64
            #:i32extend8s
            #:i32extend16s
@@ -81,6 +82,7 @@
            #:i64rotr
            #:i64clz
            #:i64ctz
+           #:i64popcnt
            #:i64extend8s
            #:i64extend16s
            #:i64extend32s
@@ -365,6 +367,9 @@
       32
       (1- (integer-length (logand x (- x))))))
 
+(defun i32popcnt (x)
+  (logcount (the i32 x)))
+
 (declaim (inline i32wrapi64))
 (defun i32wrapi64 (x)
   (ldb (byte 32 0) x))
@@ -419,6 +424,9 @@
   (if (zerop x)
       64
       (1- (integer-length (logand x (- x))))))
+
+(defun i64popcnt (x)
+  (logcount (the i64 x)))
 
 (defun i64extend8s (x)
   (ldb (byte 64 0) (sign-extend x 8)))
