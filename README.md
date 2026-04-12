@@ -5,6 +5,8 @@ The finest way to "Heap exhausted, game over."!
 ## Example
 
 ```bash
+# Install the wasm32-wasip1 toolchain
+rustup target add wasm32-wasip1
 # Build a test file
 cargo build --target wasm32-wasip1 --release
 # Produce `out.lisp`
