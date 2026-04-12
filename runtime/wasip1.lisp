@@ -385,6 +385,18 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
         finally
            (return bytes-written)))
 
+(defmethod do-write (context (file binary-file) iovs)
+  (loop with bytes-written = 0
+        with stream = (slot-value file '%stream)
+        for (buf . count) in iovs
+        do
+           (write-sequence (wasm2cl::wasm-context-memory context)
+                                       stream
+                                       :start buf :end (+ buf count))
+           (incf bytes-written count)
+        finally
+           (return bytes-written)))
+
 (defun |fd_write| (context fd iovs n-iovs size-ptr)
   (let ((iovs (loop for i below n-iovs
                     for addr = (i32load context (+ iovs (* i 8)))
@@ -453,28 +465,31 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
       (return-from |path_open| +err-badf+))
     (when (logtest oflags +oflags-directory+)
       (error "Not implemented: +oflags-directory+"))
-    (when (logtest oflags +oflags-excl+)
-      (error "Not implemented: +oflags-excl+"))
-    (when (logtest oflags +oflags-trunc+)
-      (error "Not implemented: +oflags-trunc"))
-    (when (logtest oflags +oflags-creat+)
-      (error "Not implemented: +oflags-creat"))
     (when (logtest fdflags +fdflags-append+)
       (error "Not implemented: +fdflags-append+"))
-    (let* ((stream (open full-path
-                         :direction (cond
-                                      ((and (logtest fs-rights-base +rights-fd-read+)
-                                            (logtest fs-rights-base +rights-fd-write+))
-                                       :io)
-                                      ((logtest fs-rights-base +rights-fd-read+)
-                                       :input)
-                                      ((logtest fs-rights-base +rights-fd-write+)
-                                       :output)
-                                      (t
-                                       (error "Unsupported access rights ~X" fs-rights-base)))
+    (let* ((direction (cond
+                        ((and (logtest fs-rights-base +rights-fd-read+)
+                              (logtest fs-rights-base +rights-fd-write+))
+                         :io)
+                        ((logtest fs-rights-base +rights-fd-read+)
+                         :input)
+                        ((logtest fs-rights-base +rights-fd-write+)
+                         :output)
+                        (t
+                         (error "Unsupported access rights ~X" fs-rights-base))))
+           (stream (open full-path
+                         :direction direction
                          :element-type '(unsigned-byte 8)
-                         :if-does-not-exist :error
-                         :if-exists nil))
+                         :if-does-not-exist (if (or (eql direction :input)
+                                                    (not (logtest oflags +oflags-creat+)))
+                                                :error
+                                                :create)
+                         :if-exists (cond ((logtest oflags +oflags-excl+)
+                                           :error)
+                                          ((logtest oflags +oflags-trunc+)
+                                           :supersede)
+                                          (t
+                                           :overwrite))))
            (file (make-instance 'binary-file
                                 :path full-path
                                 :stream stream))
