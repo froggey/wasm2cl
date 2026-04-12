@@ -1,11 +1,18 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (asdf:load-system :nibbles))
+  (asdf:load-system :nibbles)
+  (asdf:load-system :babel))
 
 (defpackage :wasm2cl
   (:use :cl)
   (:export #:define-wasm-function #:define-wasm-import #:define-wasm-export
+
            #:i32 #:i64 #:f32 #:f64 #:v128 #:func-ref #:extern-ref
-           #:make-wasm-context #:context #:global #:call-indirect #:select
+
+           #:make-wasm-context
+           #:wasm-context-personality #:wasm-context-memory
+           #:wasm-context-table #:wasm-context-globals
+
+           #:context #:global #:call-indirect #:select
            #:unreachable
            #:memory-copy #:memory-fill #:memory-grow #:memory-size
            #:i32load #:i32store
@@ -326,10 +333,13 @@
 
 (defun i32rotl (value count)
   (setf count (logand 31 count))
-  (logior (ldb (byte count (- 31 count)) value)
-          (ash (ldb (byte (- 31 count) 0) value) count)))
+  (logior (ldb (byte count (- 32 count)) value)
+          (ash (ldb (byte (- 32 count) 0) value) count)))
 
-;; I32Rotr,
+(defun i32rotr (value count)
+  (setf count (logand 31 count))
+  (logior (ash value (- count))
+          (ash (ldb (byte count 0) value) (- 32 count))))
 
 (defun i32clz (x)
   (- 32 (integer-length x)))
@@ -346,7 +356,9 @@
 (defun i32extend8s (x)
   (ldb (byte 32 0) (sign-extend x 8)))
 
-;; I32Extend16S,
+(defun i32extend16s (x)
+  (ldb (byte 32 0) (sign-extend x 16)))
+
 
 (define-conditional i64eqz (x) (eql (the i64 x) 0))
 (define-conditional i64eq (x y) (eql (the i64 x) (the i64 y)))
@@ -373,13 +385,33 @@
 (define-integer-binop i64shl i64 nil ash)
 (define-integer-binop i64shru i64 nil (lambda (x y) (ash x (- y))))
 (define-integer-binop i64shrs i64 nil (lambda (x y) (ash (sign-extend x 64) (- y))))
-;; I64Rotl,
-;; I64Rotr,
-;; I64Clz,
-;; I64Ctz,
-;; I64Extend8S,
-;; I64Extend16S,
-;; I64Extend32S,
+
+(defun i64rotl (value count)
+  (setf count (logand 63 count))
+  (logior (ldb (byte count (- 64 count)) value)
+          (ash (ldb (byte (- 64 count) 0) value) count)))
+
+(defun i64rotr (value count)
+  (setf count (logand 63 count))
+  (logior (ash value (- count))
+          (ash (ldb (byte count 0) value) (- 64 count))))
+
+(defun i64clz (x)
+  (- 64 (integer-length x)))
+
+(defun i64ctz (x)
+  (if (zerop x)
+      64
+      (1- (integer-length (logand x (- x))))))
+
+(defun i64extend8s (x)
+  (ldb (byte 64 0) (sign-extend x 8)))
+
+(defun i64extend16s (x)
+  (ldb (byte 64 0) (sign-extend x 16)))
+
+(defun i64extend32s (x)
+  (ldb (byte 64 0) (sign-extend x 32)))
 
 (define-conditional f32eq (x y) (eql (the f32 x) (the f32 y)))
 (define-conditional f32ne (x y) (not (eql (the f32 x) (the f32 y))))
@@ -391,10 +423,18 @@
 (define-float-binop f32sub f32 -)
 (define-float-binop f32mul f32 *)
 (define-float-binop f32div f32 /)
-;; F32ConvertI32U,
-;; F32ConvertI32S,
-;; F32ConvertI64U,
-;; F32ConvertI64S,
+
+(defun f32converti32u (x)
+  (float (the i32 x) 0.0f0))
+
+(defun f32converti32s (x)
+  (float (sign-extend (the i32 x) 32) 0.0f0))
+
+(defun f32converti64u (x)
+  (float (the i64 x) 0.0f0))
+
+(defun f32converti64s (x)
+  (float (sign-extend (the i64 x) 64) 0.0f0))
 
 (define-conditional f64eq (x y) (eql (the f64 x) (the f64 y)))
 (define-conditional f64ne (x y) (not (eql (the f64 x) (the f64 y))))
@@ -406,7 +446,15 @@
 (define-float-binop f64sub f64 -)
 (define-float-binop f64mul f64 *)
 (define-float-binop f64div f64 /)
-;; F64ConvertI32U,
-;; F64ConvertI32S,
-;; F64ConvertI64U,
-;; F64ConvertI64S,
+
+(defun f64converti32u (x)
+  (float (the i32 x) 0.0d0))
+
+(defun f64converti32s (x)
+  (float (sign-extend (the i32 x) 32) 0.0d0))
+
+(defun f64converti64u (x)
+  (float (the i64 x) 0.0d0))
+
+(defun f64converti64s (x)
+  (float (sign-extend (the i64 x) 64) 0.0d0))
