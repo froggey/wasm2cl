@@ -205,7 +205,8 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
    (%stream :initarg :stream)))
 
 (defclass preopened-path ()
-  ((%path :initarg :path)))
+  ((%path :initarg :path)
+   (%real-path :initarg :real-path)))
 
 (defclass wasip1-personality ()
   ((%args :initarg :args)
@@ -252,7 +253,9 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
                                                        (make-instance 'output-stream-file)
                                                        ;; stderr
                                                        (make-instance 'output-stream-file)
-                                                       (make-instance 'preopened-path :path "/"))
+                                                       (make-instance 'preopened-path
+                                                                      :real-path (namestring *default-pathname-defaults*)
+                                                                      :path "/"))
                                :adjustable t
                                :fill-pointer t))
          (personality (make-instance 'wasip1-personality
@@ -351,20 +354,23 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
   (list :filetype +filetype-regular-file+
         :size (file-length (slot-value file '%stream))))
 
+(defun write-filestat (context stat statbuf)
+  (i64store context (+ statbuf 0) (getf stat :dev 0))
+  (i64store context (+ statbuf 8) (getf stat :ino 0))
+  (i32store8 context (+ statbuf 16) (getf stat :filetype +filetype-unknown+))
+  (i64store context (+ statbuf 24) (getf stat :nlink 1))
+  (i64store context (+ statbuf 32) (getf stat :size 0))
+  (i64store context (+ statbuf 40) (getf stat :atim 0))
+  (i64store context (+ statbuf 48) (getf stat :mtim 0))
+  (i64store context (+ statbuf 56) (getf stat :ctim 0)))
+
 (defun |fd_filestat_get| (context fd statbuf)
   (let ((file (resolve-fd context fd)))
-    (if file
-        (let ((stat (stat-file file)))
-          (i64store context (+ statbuf 0) (getf stat :dev 0))
-          (i64store context (+ statbuf 8) (getf stat :ino 0))
-          (i32store8 context (+ statbuf 16) (getf stat :filetype +filetype-unknown+))
-          (i64store context (+ statbuf 24) (getf stat :nlink 1))
-          (i64store context (+ statbuf 32) (getf stat :size 0))
-          (i64store context (+ statbuf 40) (getf stat :atim 0))
-          (i64store context (+ statbuf 48) (getf stat :mtim 0))
-          (i64store context (+ statbuf 56) (getf stat :ctim 0))
-          +success+)
-        +err-badf+)))
+    (cond (file
+           (write-filestat context (stat-file file) statbuf)
+           +success+)
+          (t
+           +err-badf+))))
 
 (defgeneric do-write (context file iovs))
 
@@ -430,12 +436,20 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
           (t
            +err-badf+))))
 
-(defun |path_open| (context fd lookup-flags path-buf path-len oflags fs-rights-base fs-rights-inheriting fdflags out-ptr)
-  (declare (ignore lookup-flags fs-rights-inheriting))
-  (let ((dir (resolve-fd context fd))
+(defun resolve-path (context dir-fd lookup-flags path-buf path-len)
+  (declare (ignore lookup-flags))
+  (let ((dir (resolve-fd context dir-fd))
         (path (babel:octets-to-string (wasm2cl::wasm-context-memory context)
                                       :start path-buf :end (+ path-buf path-len))))
     (unless (typep dir 'preopened-path)
+      ;; FIXME: Better error here.
+      (return-from resolve-path nil))
+    (concatenate 'string (slot-value dir '%real-path) path)))
+
+(defun |path_open| (context dir-fd lookup-flags path-buf path-len oflags fs-rights-base fs-rights-inheriting fdflags out-ptr)
+  (declare (ignore fs-rights-inheriting))
+  (let ((full-path (resolve-path context dir-fd lookup-flags path-buf path-len)))
+    (unless full-path
       (return-from |path_open| +err-badf+))
     (when (logtest oflags +oflags-directory+)
       (error "Not implemented: +oflags-directory+"))
@@ -447,8 +461,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
       (error "Not implemented: +oflags-creat"))
     (when (logtest fdflags +fdflags-append+)
       (error "Not implemented: +fdflags-append+"))
-    (let* ((full-path (concatenate 'string (slot-value dir '%path) path))
-           (stream (open full-path
+    (let* ((stream (open full-path
                          :direction (cond
                                       ((and (logtest fs-rights-base +rights-fd-read+)
                                             (logtest fs-rights-base +rights-fd-write+))
@@ -469,6 +482,32 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
                                                         '%fd-table))))
       (i32store context out-ptr new-fd)
       +success+)))
+
+(defun |path_filestat_get| (context dir-fd lookup-flags path-buf path-len statbuf)
+  (let ((full-path (resolve-path context dir-fd lookup-flags path-buf path-len)))
+    (unless full-path
+      (return-from |path_filestat_get| +err-badf+))
+    (let ((p (ignore-errors (truename full-path))))
+      (cond ((null p)
+             +err-noent+)
+            ((or (pathname-name p)
+                 (pathname-type p))
+             (let ((len (with-open-file (s p :direction :input :element-type '(unsigned-byte 8))
+                          (file-length s))))
+               (write-filestat context (list :filetype +filetype-regular-file+ :size len) statbuf))
+             +success+)
+            (t
+             (write-filestat context (list :filetype +filetype-directory+) statbuf)
+             +success+)))))
+
+(defun |path_create_directory| (context dir-fd path-buf path-len)
+  (let ((full-path (resolve-path context dir-fd 0 path-buf path-len)))
+    (unless full-path
+      (return-from |path_create_directory| +err-badf+))
+    (setf full-path (concatenate 'string full-path "/"))
+    (if (nth-value 1 (ensure-directories-exist full-path))
+        +success+
+        +err-exist+)))
 
 (defun |proc_exit| (context code)
   (declare (ignore context))

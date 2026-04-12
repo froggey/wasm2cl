@@ -135,8 +135,7 @@
 (defmacro define-wasm-function (name args return-type &body body)
   (declare (ignore return-type))
   `(defun ,name (context . ,(loop for (a) in args collect a))
-     (declare (optimize (debug 0))
-              (type wasm-context context)
+     (declare (type wasm-context context)
               (ignorable context ,@(loop for (a) in args collect a))
               ,@(loop for (a ty) in args
                       collect `(type ,ty ,a)))
