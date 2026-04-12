@@ -1,0 +1,9 @@
+[package]
+name = "wasm2cl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.0", features = ["derive"] }
+wasmparser = "0.246.2"
