@@ -272,13 +272,13 @@
   (aref (wasm-context-memory context) address))
 
 (defun i32load8s (context address)
-  (aref (wasm-context-memory context) address))
+  (ldb (byte 32 0) (sign-extend (aref (wasm-context-memory context) address) 8)))
 
 (defun i32load16u (context address)
   (nibbles:ub16ref/le (wasm-context-memory context) address))
 
 (defun i32load16s (context address)
-  (nibbles:ub16ref/le (wasm-context-memory context) address))
+  (ldb (byte 32 0) (sign-extend (nibbles:ub16ref/le (wasm-context-memory context) address) 16)))
 
 (defun i32store (context address value)
   (setf (nibbles:ub32ref/le (wasm-context-memory context) address) value))
@@ -296,19 +296,19 @@
   (aref (wasm-context-memory context) address))
 
 (defun i64load8s (context address)
-  (aref (wasm-context-memory context) address))
+  (ldb (byte 64 0) (sign-extend (aref (wasm-context-memory context) address) 8)))
 
 (defun i64load16u (context address)
   (nibbles:ub16ref/le (wasm-context-memory context) address))
 
 (defun i64load16s (context address)
-  (nibbles:ub16ref/le (wasm-context-memory context) address))
+  (ldb (byte 64 0) (sign-extend (nibbles:ub16ref/le (wasm-context-memory context) address) 16)))
 
 (defun i64load32u (context address)
   (nibbles:ub32ref/le (wasm-context-memory context) address))
 
 (defun i64load32s (context address)
-  (nibbles:ub32ref/le (wasm-context-memory context) address))
+  (ldb (byte 64 0) (sign-extend (nibbles:ub32ref/le (wasm-context-memory context) address) 32)))
 
 (defun i64store (context address value)
   (setf (nibbles:ub64ref/le (wasm-context-memory context) address) value))
