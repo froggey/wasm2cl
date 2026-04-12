@@ -11,6 +11,8 @@
            #:|fd_write| #:|fd_read|
            #:|fd_close|
            #:|path_open|
+           #:|path_filestat_get|
+           #:|path_create_directory|
            #:|proc_exit|))
 
 (in-package :wasm2cl-wasip1)

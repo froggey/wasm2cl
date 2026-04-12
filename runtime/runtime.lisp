@@ -1,14 +1,10 @@
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (asdf:load-system :nibbles)
-  (asdf:load-system :babel))
-
 (defpackage :wasm2cl
   (:use :cl)
   (:export #:define-wasm-function #:define-wasm-import #:define-wasm-export
 
            #:i32 #:i64 #:f32 #:f64 #:v128 #:func-ref #:extern-ref
 
-           #:make-wasm-context
+           #:make-wasm-context #:wasm-context
            #:wasm-context-personality #:wasm-context-memory
            #:wasm-context-table #:wasm-context-globals
 
@@ -139,7 +135,8 @@
 (defmacro define-wasm-function (name args return-type &body body)
   (declare (ignore return-type))
   `(defun ,name (context . ,(loop for (a) in args collect a))
-     (declare (type wasm-context context)
+     (declare (optimize (debug 0))
+              (type wasm-context context)
               (ignorable context ,@(loop for (a) in args collect a))
               ,@(loop for (a ty) in args
                       collect `(type ,ty ,a)))
@@ -437,6 +434,12 @@
 (defun i64extend32s (x)
   (ldb (byte 64 0) (sign-extend x 32)))
 
+(defun f32load (context address)
+  (nibbles:ieee-single-ref/le (wasm-context-memory context) address))
+
+(defun f32store (context address value)
+  (setf (nibbles:ieee-single-ref/le (wasm-context-memory context) address) value))
+
 (define-conditional f32eq (x y) (eql (the f32 x) (the f32 y)))
 (define-conditional f32ne (x y) (not (eql (the f32 x) (the f32 y))))
 (define-conditional f32le (x y) (<= (the f32 x) (the f32 y)))
@@ -459,6 +462,12 @@
 
 (defun f32converti64s (x)
   (float (sign-extend (the i64 x) 64) 0.0f0))
+
+(defun f64load (context address)
+  (nibbles:ieee-double-ref/le (wasm-context-memory context) address))
+
+(defun f64store (context address value)
+  (setf (nibbles:ieee-double-ref/le (wasm-context-memory context) address) value))
 
 (define-conditional f64eq (x y) (eql (the f64 x) (the f64 y)))
 (define-conditional f64ne (x y) (not (eql (the f64 x) (the f64 y))))

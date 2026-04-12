@@ -1,5 +1,5 @@
 use clap::Parser as ClapParser;
-use std::{fs, path::PathBuf, fmt::Write};
+use std::{fs, path::{Path, PathBuf}, fmt::Write, io::BufWriter};
 
 use anyhow::{bail, Context, Result};
 use wasmparser::Parser;
@@ -1577,14 +1577,14 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
 
     println!("func {} {} {:?}", func.index, func.name(), func.ty);
 
-    if func.index == 1835 {
+    /*if func.index == 1835 {
         let op_read = wasmparser::OperatorsReader::new(
             wasmparser::BinaryReader::new(&body.code_bytes, body.code_offset));
         for (i, op) in op_read.into_iter().enumerate() {
             let op = op?;
             println!("  {i}: {op:?}");
         }
-    }
+    }*/
 
     let mut op_read = wasmparser::OperatorsReader::new(
         wasmparser::BinaryReader::new(&body.code_bytes, body.code_offset));
@@ -1649,6 +1649,21 @@ fn emit(module: &Module, package: &str) -> Result<String> {
     writeln!(&mut result)?;
 
     for f in module.functions.iter() {
+        write!(&mut result, "(declaim (ftype (function (wasm-context")?;
+        for ty in f.ty.params.iter() {
+            write!(&mut result, " {}", convert_type(*ty))?;
+        }
+        writeln!(&mut result, ") {}) {}))",
+               if f.ty.results.is_empty() {
+                   "t"
+               } else {
+                   convert_type(f.ty.results[0])
+               },
+               f.name())?;
+    }
+    writeln!(&mut result)?;
+
+    for f in module.functions.iter() {
         writeln!(&mut result, "{}", convert_function(&module, f)?)?;
         writeln!(&mut result)?;
     }
@@ -1683,11 +1698,146 @@ fn emit(module: &Module, package: &str) -> Result<String> {
     Ok(result)
 }
 
+fn emit_system(module: &Module, package_name: &str, path: &Path) -> Result<()> {
+    use std::io::Write;
+
+    let file = fs::File::create(path.join(format!("{package_name}.asd")))?;
+    let mut out = BufWriter::new(file);
+
+    writeln!(&mut out, "(defsystem :{package_name}")?;
+    writeln!(&mut out, "  :depends-on (#:wasm2cl)")?;
+    writeln!(&mut out, "  :serial t")?;
+    writeln!(&mut out, "  :components ((:file \"main\")")?;
+
+    for i in 0..(module.functions.len().div_ceil(100)) {
+        writeln!(&mut out, "               (:file \"functions-{i:04}\")")?;
+    }
+    writeln!(&mut out, "))")?;
+
+    Ok(())
+}
+
+fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
+    use std::io::Write;
+
+    let file = fs::File::create(path.join(format!("main.lisp")))?;
+    let mut out = BufWriter::new(file);
+
+    writeln!(&mut out, "(defpackage :{package}")?;
+    writeln!(&mut out, "  (:use :cl :wasm2cl)")?;
+    write!(&mut out, "  (:export #:wasm2cl-create-context")?;
+    for e in module.exports.iter() {
+        writeln!(&mut out)?;
+        write!(&mut out, "           #:{}", symbolicate(&e.name))?;
+    }
+    writeln!(&mut out, "))")?;
+    writeln!(&mut out)?;
+
+    writeln!(&mut out, "(in-package :{package})")?;
+    writeln!(&mut out)?;
+
+    for f in module.functions.iter() {
+        write!(&mut out, "(declaim (ftype (function (wasm-context")?;
+        for ty in f.ty.params.iter() {
+            write!(&mut out, " {}", convert_type(*ty))?;
+        }
+        writeln!(&mut out, ") {}) {}))",
+               if f.ty.results.is_empty() {
+                   "t"
+               } else {
+                   convert_type(f.ty.results[0])
+               },
+               f.name())?;
+    }
+    writeln!(&mut out)?;
+
+    writeln!(&mut out, "(defun wasm2cl-create-context (personality)")?;
+    writeln!(&mut out, "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
+             module.memory_initial_size)?;
+    writeln!(&mut out, "        (table (make-array {} :initial-element nil))",
+             module.table_initial_size)?;
+    write!(&mut out, "        (globals (vector")?;
+    for global in module.globals.iter() {
+        write!(&mut out, " {}", global.initializer)?;
+    }
+    writeln!(&mut out, ")))")?;
+    for data in module.active_data.iter() {
+        writeln!(&mut out, "    (replace memory #.(coerce '(")?;
+        for (i, byte) in data.data.iter().enumerate() {
+            if i != 0 && (i % 25) == 0 {
+                writeln!(&mut out)?;
+            }
+            write!(&mut out, " {byte}")?;
+        }
+        writeln!(&mut out, ")")?;
+        writeln!(&mut out, "                              '(simple-array (unsigned-byte 8) (*)))")?;
+        writeln!(&mut out, "             :start1 {})", data.address)?;
+    }
+    for elt in module.active_elements.iter() {
+        for (i, val) in elt.data.iter().enumerate() {
+            writeln!(&mut out, "    (setf (svref table {}) #'{})",
+                     elt.address + i,
+                     module.functions[*val].name())?;
+        }
+    }
+    writeln!(&mut out, "  (make-wasm-context :personality personality")?;
+    writeln!(&mut out, "                     :memory memory")?;
+    writeln!(&mut out, "                     :globals globals")?;
+    writeln!(&mut out, "                     :table table)))")?;
+    writeln!(&mut out)?;
+
+    for e in module.exports.iter() {
+        let func = &module.functions[e.func_idx];
+        writeln!(&mut out, "(define-wasm-export {} ({}) ({}) {})",
+                 func.name(),
+                 {
+                     let mut result = String::new();
+                     for ty in func.ty.params.iter() {
+                         if !result.is_empty() {
+                             result.push_str(" ");
+                         }
+                         result.push_str(&convert_type(*ty));
+                     }
+                     result
+                 },
+                 {
+                     let mut result = String::new();
+                     for ty in func.ty.results.iter() {
+                         if !result.is_empty() {
+                             result.push_str(" ");
+                         }
+                         result.push_str(&convert_type(*ty));
+                     }
+                     result
+                 },
+                 symbolicate(&e.name))?;
+    }
+
+    Ok(())
+}
+
+fn emit_functions(module: &Module, package: &str, path: &Path) -> Result<()> {
+    use std::io::Write;
+
+    for (i, fns) in module.functions.chunks(100).enumerate() {
+        let file = fs::File::create(path.join(format!("functions-{i:04}.lisp")))?;
+        let mut out = BufWriter::new(file);
+
+        writeln!(&mut out, "(in-package :{package})")?;
+        writeln!(&mut out)?;
+
+        for f in fns {
+            writeln!(&mut out, "{}", convert_function(&module, f)?)?;
+            writeln!(&mut out)?;
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(ClapParser)]
 struct Cli {
     input: PathBuf,
-    #[arg(short, long, default_value = "out.lisp")]
-    output: PathBuf,
     package: String,
 }
 
@@ -1703,7 +1853,17 @@ fn main() -> Result<()> {
     println!("active datas: {}", module.active_data.len());
     println!("active elts:  {}", module.active_elements.len());
 
-    fs::write(&cli.output, emit(&module, &cli.package)?)?;
+    let dir = std::path::Path::new(&cli.package);
+    if dir.exists() {
+        bail!("output directory already exists: {}", dir.display());
+    }
+    fs::create_dir_all(&dir)?;
+
+    emit_system(&module, &cli.package, &dir)?;
+    emit_main(&module, &cli.package, &dir)?;
+    emit_functions(&module, &cli.package, &dir)?;
+
+    //fs::write(&cli.output, emit(&module, &cli.package)?)?;
 
     Ok(())
 }
