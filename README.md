@@ -22,3 +22,7 @@ cargo run --release -- target/wasm32-wasip1/release/wasm2cl.wasm wasm2cl-wasm2cl
 (asdf:load-system :wasm2cl-wasm2cl-sys)
 (wasm2cl-wasip1:run :wasm2cl-wasm2cl-sys "--help")
 ```
+
+## TODO
+
+Run the standard conformance tests against this, ideally in CI too.
