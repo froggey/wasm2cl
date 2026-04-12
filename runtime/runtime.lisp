@@ -119,6 +119,8 @@
 
 (in-package :wasm2cl)
 
+(defconstant +wasm-page-size+ #x10000)
+
 (deftype i32 () `(unsigned-byte 32))
 (deftype i64 () `(unsigned-byte 64))
 (deftype f32 () `single-float)
@@ -220,6 +222,20 @@
              :start1 dst
              :end1 (+ dst n)
              :start2 src)))
+
+(defun memory-fill (context dst value n)
+  (fill (wasm-context-memory context) value
+        :start dst
+        :end (+ dst n)))
+
+(defun memory-grow (context pages)
+  (let ((new-memory (make-array (+ (length (wasm-context-memory context))
+                                   (* pages +wasm-page-size+))
+                                :element-type '(unsigned-byte 8)))
+        (current (length (wasm-context-memory context))))
+    (replace new-memory (wasm-context-memory context))
+    (setf (wasm-context-memory context) new-memory)
+    (truncate current +wasm-page-size+)))
 
 (defmacro define-conditional (name args op)
   (let ((fused-name (intern (format nil "~A.FUSED" name)
