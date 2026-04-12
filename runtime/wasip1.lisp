@@ -1,6 +1,6 @@
 (defpackage :wasm2cl-wasip1
   (:use :cl :wasm2cl)
-  (:export #:run
+  (:export #:run #:run-1
 
            #:|args_sizes_get| #:|args_get|
            #:|environ_sizes_get| #:|environ_get|
@@ -19,31 +19,64 @@
   ((%args :initarg :args)
    (%env :initarg :env)))
 
-(defun run (package-designator env &rest args)
+(defun run-1 (package-designator &key arguments environment)
   (let* ((package (or (find-package package-designator)
                       (error "Unknown package ~S" package-designator)))
          (context-create (find-symbol "WASM2CL-CREATE-CONTEXT" package))
          (entry (find-symbol "_start" package))
          (personality (make-instance 'wasip1-personality
-                                     :args args
-                                     :env env)))
+                                     :args arguments
+                                     :env environment)))
     (catch 'exit
       (funcall entry (funcall context-create personality)))))
 
+(defun run (package-designator &rest args)
+  (run-1 package-designator
+         :arguments (list* (if (packagep package-designator)
+                               (package-name package-designator)
+                               (string package-designator))
+                           args)))
+
 (defun |args_sizes_get| (context argc-out-ptr buf-size-out-ptr)
-  (i32store context argc-out-ptr 0)
-  (i32store context buf-size-out-ptr 0)
+  (with-slots (%args) (wasm-context-personality context)
+    (let ((argc (length %args))
+          (buf-size (loop for arg in %args
+                          summing (1+ (babel:string-size-in-octets arg)))))
+      (i32store context argc-out-ptr argc)
+      (i32store context buf-size-out-ptr buf-size)))
   0)
 
 (defun |args_get| (context argv-ptr arg-buf-ptr)
+  (with-slots (%args) (wasm-context-personality context)
+    (loop with memory = (wasm-context-memory context)
+          for arg in %args
+          for encoded = (babel:string-to-octets arg)
+          do (i32store context argv-ptr arg-buf-ptr)
+             (replace memory encoded :start1 arg-buf-ptr)
+             (i32store8 context (+ arg-buf-ptr (length encoded)) 0)
+             (incf argv-ptr 4)
+             (incf arg-buf-ptr (1+ (length encoded)))))
   0)
 
 (defun |environ_sizes_get| (context envc-out-ptr buf-size-out-ptr)
-  (i32store context envc-out-ptr 0)
-  (i32store context buf-size-out-ptr 0)
+  (with-slots (%env) (wasm-context-personality context)
+    (let ((envc (length %env))
+          (buf-size (loop for env in %env
+                          summing (1+ (babel:string-size-in-octets env)))))
+      (i32store context envc-out-ptr envc)
+      (i32store context buf-size-out-ptr buf-size)))
   0)
 
-(defun |environ_get| (context envp-ptr arg-buf-ptr)
+(defun |environ_get| (context envp-ptr buf-ptr)
+  (with-slots (%env) (wasm-context-personality context)
+    (loop with memory = (wasm-context-memory context)
+          for env in %env
+          for encoded = (babel:string-to-octets env)
+          do (i32store context envp-ptr buf-ptr)
+             (replace memory encoded :start1 buf-ptr)
+             (i32store8 context (+ buf-ptr (length encoded)) 0)
+             (incf envp-ptr 4)
+             (incf buf-ptr (1+ (length encoded)))))
   0)
 
 (defun |fd_fdstat_get| (context fd statbuf)
