@@ -6,7 +6,7 @@ The finest way to "Heap exhausted, game over."!
 
 ```bash
 # Build a test file
-cargo build --target wasm32-wasip2 --release
+cargo build --target wasm32-wasip1 --release
 # Produce `out.lisp`
 cargo run --release -- target/wasm32-wasip1/release/wasm2cl.wasm :wasm2cl-wasm2cl-sys
 ```
