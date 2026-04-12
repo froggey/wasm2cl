@@ -1,1 +1,3 @@
 /target
+*.fasl
+out.lisp

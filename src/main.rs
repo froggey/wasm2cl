@@ -1596,10 +1596,20 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
 fn emit(module: &Module, package: &str) -> Result<String> {
     let mut result = String::new();
 
+    writeln!(&mut result, "(defpackage {package}")?;
+    writeln!(&mut result, "  (:use :cl :wasm2cl)")?;
+    write!(&mut result, "  (:export #:wasm2cl-create-context")?;
+    for e in module.exports.iter() {
+        writeln!(&mut result)?;
+        write!(&mut result, "           #:{}", symbolicate(&e.name))?;
+    }
+    writeln!(&mut result, "))")?;
+    writeln!(&mut result)?;
+
     writeln!(&mut result, "(in-package {package})")?;
     writeln!(&mut result)?;
 
-    writeln!(&mut result, "(defun wasm2cl-create-context ()")?;
+    writeln!(&mut result, "(defun wasm2cl-create-context (personality)")?;
     writeln!(&mut result, "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
              module.memory_initial_size)?;
     writeln!(&mut result, "        (table (make-array {} :initial-element nil))",
@@ -1628,7 +1638,8 @@ fn emit(module: &Module, package: &str) -> Result<String> {
                      module.functions[*val].name())?;
         }
     }
-    writeln!(&mut result, "  (make-wasm-context :memory memory")?;
+    writeln!(&mut result, "  (make-wasm-context :personality personality")?;
+    writeln!(&mut result, "                     :memory memory")?;
     writeln!(&mut result, "                     :globals globals")?;
     writeln!(&mut result, "                     :table table)))")?;
     writeln!(&mut result)?;
@@ -1639,9 +1650,30 @@ fn emit(module: &Module, package: &str) -> Result<String> {
     }
 
     for e in module.exports.iter() {
-        writeln!(&mut result, "(define-wasm-export {} {})",
-                 symbolicate(&e.name),
-                 module.functions[e.func_idx].name())?;
+        let func = &module.functions[e.func_idx];
+        writeln!(&mut result, "(define-wasm-export {} ({}) ({}) {})",
+                 func.name(),
+                 {
+                     let mut result = String::new();
+                     for ty in func.ty.params.iter() {
+                         if !result.is_empty() {
+                             result.push_str(" ");
+                         }
+                         result.push_str(&convert_type(*ty));
+                     }
+                     result
+                 },
+                 {
+                     let mut result = String::new();
+                     for ty in func.ty.results.iter() {
+                         if !result.is_empty() {
+                             result.push_str(" ");
+                         }
+                         result.push_str(&convert_type(*ty));
+                     }
+                     result
+                 },
+                 symbolicate(&e.name))?;
     }
 
     Ok(result)

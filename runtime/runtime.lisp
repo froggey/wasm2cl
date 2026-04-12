@@ -135,15 +135,24 @@
      (block nil
        ,@body)))
 
-;; TODO
 (defmacro define-wasm-import (local-name arg-types return-type module name)
-  (declare (ignore arg-types return-type module name))
-  `',local-name)
+  (declare (ignore return-type))
+  (let ((package (or (if (string= module "wasi_snapshot_preview1")
+                          (find-package :wasm2cl-wasip1))
+                     (error "Unknown import module ~S" module))))
+    (multiple-value-bind (symbol status)
+        (find-symbol (string name) package)
+      (unless (eql status :external)
+        (error "Unknown import ~S" name))
+      (let ((args (loop for nil in arg-types collect (gensym "ARG"))))
+        `(defun ,local-name (context . ,args)
+           (,symbol context ,@args))))))
 
-;; TODO
-(defmacro define-wasm-export (name local-name)
-  (declare (ignore local-name))
-  `',name)
+(defmacro define-wasm-export (local-name arg-types return-type name)
+  (declare (ignore return-type))
+  (let ((args (loop for nil in arg-types collect (gensym "ARG"))))
+    `(defun ,name (context . ,args)
+       (,local-name context ,@args))))
 
 (defmacro f32const (value)
   (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
@@ -401,66 +410,3 @@
 ;; F64ConvertI32S,
 ;; F64ConvertI64U,
 ;; F64ConvertI64S,
-
-
-(defpackage :wasm2cl-wasm2cl-sys
-  (:use :cl :wasm2cl)
-  (:export #:wasm2cl-wasm2cl-sys))
-
-(in-package :wasm2cl-wasm2cl-sys)
-
-(defun wasi-args-sizes-get (context argc-out-ptr buf-size-out-ptr)
-  (i32store context argc-out-ptr 0)
-  (i32store context buf-size-out-ptr 0)
-  0)
-
-(defun wasi-args-get (context argv-ptr arg-buf-ptr)
-  0)
-
-(defun wasi-environ-sizes-get (context envc-out-ptr buf-size-out-ptr)
-  (i32store context envc-out-ptr 0)
-  (i32store context buf-size-out-ptr 0)
-  0)
-
-(defun wasi-environ-get (context envp-ptr arg-buf-ptr)
-  0)
-
-(defun wasi-fd-fdstat-get (context fd statbuf)
-  0)
-
-(defun wasi-fd-write (context fd iovs n-iovs size-ptr)
-  (when (member fd '(1 2)) ; stdout/stderr
-    (loop with bytes-written = 0
-          for i below n-iovs
-          do (let* ((buf (i32load context (+ iovs (* i 8))))
-                    (count (i32load context (+ iovs (* i 8) 4)))
-                    (data (subseq (wasm2cl::wasm-context-memory context)
-                                  buf (+ buf count)))
-                    (str (map 'string #'code-char data)))
-               (write-string str)
-               (incf bytes-written count))
-          finally
-             (i32store context size-ptr bytes-written)))
-  0)
-
-(defun wasi-proc-exit (context code)
-  (declare (ignore context))
-  (throw 'exit code))
-
-(defun wasm-0-|_ZN4wasi13lib_generated22wasi_snapshot_preview114args_sizes_get17had3cd62c32382159E| (context argc-out-ptr buf-size-out-ptr)
-  (wasi-args-sizes-get context argc-out-ptr buf-size-out-ptr))
-
-(defun wasm-3-|_ZN4wasi13lib_generated22wasi_snapshot_preview18args_get17h9d9b69303adedd84E| (context argv-ptr arg-buf-ptr)
-  (wasi-args-get context argv-ptr arg-buf-ptr))
-
-(defun |WASM-7-__imported_wasi_snapshot_preview1_environ_sizes_get| (context envc-out-ptr buf-size-out-ptr)
-  (wasi-environ-sizes-get context envc-out-ptr buf-size-out-ptr))
-
-(defun |WASM-9-__imported_wasi_snapshot_preview1_fd_fdstat_get| (context fd statbuf)
-  (wasi-fd-fdstat-get context fd statbuf))
-
-(defun |WASM-4-_ZN4wasi13lib_generated22wasi_snapshot_preview18fd_write17hff31d06e93503cc8E| (context fd iovs n-iovs size-ptr)
-  (wasi-fd-write context fd iovs n-iovs size-ptr))
-
-(defun wasm-12-|__imported_wasi_snapshot_preview1_proc_exit| (context code)
-  (wasi-proc-exit context code))
