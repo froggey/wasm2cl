@@ -1,14 +1,25 @@
 use clap::Parser as ClapParser;
-use std::{fs, path::{Path, PathBuf}, fmt::Write, io::BufWriter};
+use std::{
+    fmt::Write,
+    fs,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use wasmparser::Parser;
 
 const WASM_PAGE_SIZE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Type {
-    I32, I64, F32, F64, V128, FuncRef, ExternRef,
+    I32,
+    I64,
+    F32,
+    F64,
+    V128,
+    FuncRef,
+    ExternRef,
 }
 
 #[derive(Debug, Clone)]
@@ -74,8 +85,8 @@ fn parse_type(ty: &wasmparser::ValType) -> Result<Type> {
         wasmparser::ValType::I64 => Type::I64,
         wasmparser::ValType::F32 => Type::F32,
         wasmparser::ValType::F64 => Type::F64,
-        wasmparser::ValType::V128   => Type::V128,
-        wasmparser::ValType::Ref(r) if r.is_func_ref()   => Type::FuncRef,
+        wasmparser::ValType::V128 => Type::V128,
+        wasmparser::ValType::Ref(r) if r.is_func_ref() => Type::FuncRef,
         wasmparser::ValType::Ref(r) if r.is_extern_ref() => Type::ExternRef,
         other => bail!("unsupported valtype: {other:?}"),
     })
@@ -104,8 +115,16 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                     for ty in group.types() {
                         if let wasmparser::CompositeInnerType::Func(ft) = &ty.composite_type.inner {
                             let parsed_ty = FuncType {
-                                params:  ft.params().iter().map(parse_type).collect::<Result<_>>()?,
-                                results: ft.results().iter().map(parse_type).collect::<Result<_>>()?,
+                                params: ft
+                                    .params()
+                                    .iter()
+                                    .map(parse_type)
+                                    .collect::<Result<_>>()?,
+                                results: ft
+                                    .results()
+                                    .iter()
+                                    .map(parse_type)
+                                    .collect::<Result<_>>()?,
                             };
                             println!(" {ty:?} => {parsed_ty:?}");
                             types.push(parsed_ty);
@@ -121,7 +140,14 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                     let import = import?;
                     println!(" {import:?}");
                     match import {
-                        wasmparser::Imports::Single(_, wasmparser::Import { module, name, ty: wasmparser::TypeRef::Func(ty) }) => {
+                        wasmparser::Imports::Single(
+                            _,
+                            wasmparser::Import {
+                                module,
+                                name,
+                                ty: wasmparser::TypeRef::Func(ty),
+                            },
+                        ) => {
                             functions.push(Function {
                                 index: functions.len(),
                                 ty: types[ty as usize].clone(),
@@ -200,7 +226,11 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                 println!("ElementSection");
                 for seg in reader {
                     let seg = seg?;
-                    if let wasmparser::ElementKind::Active { table_index, offset_expr } = seg.kind {
+                    if let wasmparser::ElementKind::Active {
+                        table_index,
+                        offset_expr,
+                    } = seg.kind
+                    {
                         if table_index.unwrap_or(0) != 0 {
                             bail!("Unsupported memory index {table_index:?}");
                         }
@@ -269,9 +299,9 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                 let ops_reader = body.get_operators_reader()?;
                 let mut ops_bin_reader = ops_reader.get_binary_reader();
                 let code_offset = ops_bin_reader.original_position();
-                let code_bytes = ops_bin_reader.read_bytes(
-                    ops_bin_reader.bytes_remaining()
-                )?.to_vec();
+                let code_bytes = ops_bin_reader
+                    .read_bytes(ops_bin_reader.bytes_remaining())?
+                    .to_vec();
 
                 functions[current_function].body = Some(Body {
                     locals,
@@ -284,7 +314,11 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                 println!("DataSection");
                 for seg in reader {
                     let seg = seg?;
-                    if let wasmparser::DataKind::Active { memory_index, offset_expr } = seg.kind {
+                    if let wasmparser::DataKind::Active {
+                        memory_index,
+                        offset_expr,
+                    } = seg.kind
+                    {
                         println!("ActiveSeg {} bytes", seg.data.len());
                         if memory_index != 0 {
                             bail!("Unsupported memory index {memory_index}");
@@ -299,7 +333,10 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                                 op => bail!("  Unsupported operator in offset_expr {op:?}!"),
                             }
                         }
-                        active_data.push(ActiveData { address, data: seg.data.to_owned() });
+                        active_data.push(ActiveData {
+                            address,
+                            data: seg.data.to_owned(),
+                        });
                     } else {
                         bail!("Unsupported data segment kind {:?}", seg.kind);
                     }
@@ -307,25 +344,24 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                 }
             }
             End(_) => break,
-            CustomSection(r) => {
-                match r.as_known() {
-                    wasmparser::KnownCustom::Name(reader) => {
-                        for subsection in reader {
-                            match subsection? {
-                                wasmparser::Name::Function(map) => {
-                                    println!("FunctionNameSection");
-                                    for naming in map {
-                                        let naming = naming?;
-                                        functions[naming.index as usize].internal_name = Some(naming.name.to_string());
-                                    }
+            CustomSection(r) => match r.as_known() {
+                wasmparser::KnownCustom::Name(reader) => {
+                    for subsection in reader {
+                        match subsection? {
+                            wasmparser::Name::Function(map) => {
+                                println!("FunctionNameSection");
+                                for naming in map {
+                                    let naming = naming?;
+                                    functions[naming.index as usize].internal_name =
+                                        Some(naming.name.to_string());
                                 }
-                                _ => println!("Unknown name section"),
                             }
+                            _ => println!("Unknown name section"),
                         }
                     }
-                    _ => println!("Unknown custom section {r:?}"),
                 }
-            }
+                _ => println!("Unknown custom section {r:?}"),
+            },
             s => {
                 // version header, custom sections, etc.
                 println!("Unknown section {s:?}");
@@ -390,8 +426,12 @@ impl Function {
             format!("wasm-{}-{}", self.index, symbolicate(name))
         } else if let Some((module, name)) = self.name.as_ref() {
             // Import
-            format!("wasm-import-{}-{}-{}",
-                    symbolicate(&module), symbolicate(&name), self.index)
+            format!(
+                "wasm-import-{}-{}-{}",
+                symbolicate(&module),
+                symbolicate(&name),
+                self.index
+            )
         } else {
             // Internal function
             format!("wasm-function-{}", self.index)
@@ -589,7 +629,7 @@ fn append_side_effect(exprs: &mut Vec<Expr>, stack: &mut Vec<Expr>, new: Expr) {
     if stack.is_empty() {
         exprs.push(new);
     } else {
-        let last = stack.len()-1;
+        let last = stack.len() - 1;
         if let Expr::Prog1(_, exprs) = &mut stack[last] {
             exprs.push(new);
         } else {
@@ -613,7 +653,12 @@ fn prim_op2(prim: Primitive, stack: &mut Vec<Expr>) {
 // This tries very hard to reconstruct expression trees from the bytecode.
 // We could just turn the stack into a sequence of assignments to stack slots,
 // but CL compilers don't really like that.
-fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(String, Type)], ops: &mut wasmparser::OperatorsReader) -> Result<Vec<Expr>> {
+fn expressionify_function_body(
+    module: &Module,
+    func: &Function,
+    all_locals: &[(String, Type)],
+    ops: &mut wasmparser::OperatorsReader,
+) -> Result<Vec<Expr>> {
     use wasmparser::Operator::*;
 
     let mut unreachable = false;
@@ -636,7 +681,7 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             Loop { .. } if unreachable => {
                 unreachable_depth += 1;
             }
-            Else if unreachable && unreachable_depth != 0 => { }
+            Else if unreachable && unreachable_depth != 0 => {}
             End if unreachable && unreachable_depth != 0 => {
                 unreachable_depth -= 1;
             }
@@ -676,7 +721,7 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             }
             Else => {
                 unreachable = false;
-                let idx = block_stack.len()-1;
+                let idx = block_stack.len() - 1;
                 assert!(matches!(block_stack[idx].kind, BlockKind::If));
                 assert!(block_stack[idx].then.is_none());
                 if !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty) {
@@ -716,24 +761,17 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
                                 els.pop().unwrap()
                             } else {
                                 Expr::Progn(els)
-                            }))
+                            }),
+                        )
                     }
-                    BlockKind::Block => {
-                        Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs))
-                    }
-                    BlockKind::Loop => {
-                        Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs))
-                    }
+                    BlockKind::Block => Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs)),
+                    BlockKind::Loop => Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs)),
                 };
                 if entry.targeted {
                     if matches!(entry.kind, BlockKind::Loop) {
-                        final_expr = Expr::Tagbody(
-                            entry.name,
-                            Box::new(final_expr));
+                        final_expr = Expr::Tagbody(entry.name, Box::new(final_expr));
                     } else {
-                        final_expr = Expr::Block(
-                            entry.name,
-                            Box::new(final_expr));
+                        final_expr = Expr::Block(entry.name, Box::new(final_expr));
                     }
                 }
                 if matches!(entry.blockty, wasmparser::BlockType::Empty) {
@@ -743,7 +781,7 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
                 }
             }
 
-            _ if unreachable => { }, // Nothing
+            _ if unreachable => {} // Nothing
 
             // Normal execution.
             I32Const { value } => {
@@ -763,29 +801,40 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             }
             GlobalSet { global_index } => {
                 let value = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::GlobalSet(global_index as usize,
-                                                   Box::new(value)));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::GlobalSet(global_index as usize, Box::new(value)),
+                );
             }
             LocalGet { local_index } => {
                 stack.push(Expr::Local(all_locals[local_index as usize].0.clone()));
             }
             LocalSet { local_index } => {
                 let value = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::Setf(all_locals[local_index as usize].0.clone(), Box::new(value)));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Setf(all_locals[local_index as usize].0.clone(), Box::new(value)),
+                );
             }
             LocalTee { local_index } => {
                 let value = stack.pop().unwrap();
-                stack.push(Expr::Setf(all_locals[local_index as usize].0.clone(), Box::new(value)));
+                stack.push(Expr::Setf(
+                    all_locals[local_index as usize].0.clone(),
+                    Box::new(value),
+                ));
             }
             Drop => {
                 let value = stack.pop().unwrap();
                 append_side_effect(&mut exprs, &mut stack, value);
             }
             Unreachable => {
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::Prim(Primitive::Unreachable, vec![]));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Prim(Primitive::Unreachable, vec![]),
+                );
                 unreachable = true;
             }
             Return => {
@@ -794,106 +843,132 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
                 } else {
                     stack.pop().unwrap()
                 };
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::ReturnFrom("nil".to_string(),
-                                                    Box::new(value)));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::ReturnFrom("nil".to_string(), Box::new(value)),
+                );
                 unreachable = true;
             }
             Call { function_index } => {
                 let target = &module.functions[function_index as usize];
-                let args = stack.split_off(stack.len()-target.ty.params.len());
+                let args = stack.split_off(stack.len() - target.ty.params.len());
                 match target.ty.results.len() {
                     // call for effect
-                    0 => append_side_effect(&mut exprs, &mut stack, Expr::Call(target.name(), args)),
+                    0 => {
+                        append_side_effect(&mut exprs, &mut stack, Expr::Call(target.name(), args))
+                    }
                     // call for single value
                     1 => stack.push(Expr::Call(target.name(), args)),
                     _ => unimplemented!("call producing multiple values"),
                 }
             }
-            CallIndirect { type_index, table_index } => {
+            CallIndirect {
+                type_index,
+                table_index,
+            } => {
                 assert!(table_index == 0);
                 let ty = &module.types[type_index as usize];
                 let idx = stack.pop().unwrap();
-                let args = stack.split_off(stack.len()-ty.params.len());
+                let args = stack.split_off(stack.len() - ty.params.len());
                 match ty.results.len() {
                     // call for effect
-                    0 => append_side_effect(&mut exprs, &mut stack, Expr::CallIndirect(Box::new(idx), args)),
+                    0 => append_side_effect(
+                        &mut exprs,
+                        &mut stack,
+                        Expr::CallIndirect(Box::new(idx), args),
+                    ),
                     // call for single value
                     1 => stack.push(Expr::CallIndirect(Box::new(idx), args)),
                     _ => unimplemented!("call producing multiple values"),
                 }
             }
             Br { relative_depth } => {
-                let target = block_stack.len()-1-(relative_depth as usize);
+                let target = block_stack.len() - 1 - (relative_depth as usize);
                 unreachable = true;
                 block_stack[target].targeted = true;
-                append_side_effect(&mut exprs, &mut stack,
-                                   if matches!(block_stack[target].kind, BlockKind::Loop) {
-                                       Expr::Go(block_stack[target].name.clone())
-                                   } else {
-                                       Expr::ReturnFrom(block_stack[target].name.clone(),
-                                                        Box::new(Expr::Progn(vec![])))
-                                   });
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    if matches!(block_stack[target].kind, BlockKind::Loop) {
+                        Expr::Go(block_stack[target].name.clone())
+                    } else {
+                        Expr::ReturnFrom(
+                            block_stack[target].name.clone(),
+                            Box::new(Expr::Progn(vec![])),
+                        )
+                    },
+                );
             }
             BrIf { relative_depth } => {
-                let target = block_stack.len()-1-(relative_depth as usize);
+                let target = block_stack.len() - 1 - (relative_depth as usize);
                 let test = stack.pop().unwrap();
                 block_stack[target].targeted = true;
-                let value = if !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty) {
+                let value = if !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty)
+                {
                     stack.pop().unwrap()
                 } else {
                     Expr::Progn(vec![])
                 };
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::If(
-                                       Box::new(test),
-                                       Box::new(
-                                           if matches!(block_stack[target].kind, BlockKind::Loop) {
-                                               Expr::Go(block_stack[target].name.clone())
-                                           } else {
-                                               Expr::ReturnFrom(block_stack[target].name.clone(),
-                                                                Box::new(value))
-                                           }),
-                                       Box::new(Expr::Progn(vec![]))));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::If(
+                        Box::new(test),
+                        Box::new(if matches!(block_stack[target].kind, BlockKind::Loop) {
+                            Expr::Go(block_stack[target].name.clone())
+                        } else {
+                            Expr::ReturnFrom(block_stack[target].name.clone(), Box::new(value))
+                        }),
+                        Box::new(Expr::Progn(vec![])),
+                    ),
+                );
             }
             BrTable { targets } => {
                 let idx = stack.pop().unwrap();
                 let mut target_code = vec![];
                 for target_idx in targets.targets() {
                     let target_idx = target_idx?;
-                    let target = block_stack.len()-1-(target_idx as usize);
-                    assert!(matches!(block_stack[target].blockty, wasmparser::BlockType::Empty));
+                    let target = block_stack.len() - 1 - (target_idx as usize);
+                    assert!(matches!(
+                        block_stack[target].blockty,
+                        wasmparser::BlockType::Empty
+                    ));
                     block_stack[target].targeted = true;
-                    target_code.push(
-                        if matches!(block_stack[target].kind, BlockKind::Loop) {
-                            Expr::Go(block_stack[target].name.clone())
-                        } else {
-                            Expr::ReturnFrom(block_stack[target].name.clone(),
-                                             Box::new(Expr::Progn(vec![])))
-                        });
+                    target_code.push(if matches!(block_stack[target].kind, BlockKind::Loop) {
+                        Expr::Go(block_stack[target].name.clone())
+                    } else {
+                        Expr::ReturnFrom(
+                            block_stack[target].name.clone(),
+                            Box::new(Expr::Progn(vec![])),
+                        )
+                    });
                 }
-                let default_target = block_stack.len()-1-(targets.default() as usize);
-                assert!(matches!(block_stack[default_target].blockty, wasmparser::BlockType::Empty));
+                let default_target = block_stack.len() - 1 - (targets.default() as usize);
+                assert!(matches!(
+                    block_stack[default_target].blockty,
+                    wasmparser::BlockType::Empty
+                ));
                 block_stack[default_target].targeted = true;
                 let default_code = if matches!(block_stack[default_target].kind, BlockKind::Loop) {
                     Expr::Go(block_stack[default_target].name.clone())
                 } else {
-                    Expr::ReturnFrom(block_stack[default_target].name.clone(),
-                                     Box::new(Expr::Progn(vec![])))
+                    Expr::ReturnFrom(
+                        block_stack[default_target].name.clone(),
+                        Box::new(Expr::Progn(vec![])),
+                    )
                 };
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::Switch(Box::new(idx),
-                                                Box::new(default_code),
-                                                target_code));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Switch(Box::new(idx), Box::new(default_code), target_code),
+                );
             }
             Select => {
                 let cond = stack.pop().unwrap();
                 let rhs = stack.pop().unwrap();
                 let lhs = stack.pop().unwrap();
-                stack.push(Expr::Select(
-                    Box::new(lhs),
-                    Box::new(rhs),
-                    Box::new(cond)));
+                stack.push(Expr::Select(Box::new(lhs), Box::new(rhs), Box::new(cond)));
             }
             MemoryCopy { dst_mem, src_mem } => {
                 assert!(dst_mem == 0);
@@ -901,18 +976,22 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
                 let n = stack.pop().unwrap();
                 let src = stack.pop().unwrap();
                 let dst = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::Call("memory-copy".to_string(),
-                                              vec![dst, src, n]));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Call("memory-copy".to_string(), vec![dst, src, n]),
+                );
             }
             MemoryFill { mem } => {
                 assert!(mem == 0);
                 let n = stack.pop().unwrap();
                 let value = stack.pop().unwrap();
                 let dst = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::Call("memory-fill".to_string(),
-                                              vec![dst, value, n]));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Call("memory-fill".to_string(), vec![dst, value, n]),
+                );
             }
             MemorySize { mem } => {
                 assert!(mem == 0);
@@ -930,37 +1009,77 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             }
             I32Load8U { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I32Load(Some((8, false)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I32Load(
+                    Some((8, false)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I32Load8S { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I32Load(Some((8, true)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I32Load(
+                    Some((8, true)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I32Load16U { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I32Load(Some((16, false)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I32Load(
+                    Some((16, false)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I32Load16S { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I32Load(Some((16, true)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I32Load(
+                    Some((16, true)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I32Store { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I32Store(None, Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I32Store(
+                        None,
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I32Store8 { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I32Store(Some(8), Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I32Store(
+                        Some(8),
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I32Store16 { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I32Store(Some(16), Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I32Store(
+                        Some(16),
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I32Eqz => prim_op1(Primitive::I32Eqz, &mut stack),
             I32Eq => prim_op2(Primitive::I32Eq, &mut stack),
@@ -1001,51 +1120,107 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             }
             I64Load8U { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((8, false)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((8, false)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Load8S { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((8, true)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((8, true)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Load16U { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((16, false)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((16, false)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Load16S { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((16, true)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((16, true)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Load32U { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((32, false)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((32, false)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Load32S { memarg } => {
                 let addr = stack.pop().unwrap();
-                stack.push(Expr::I64Load(Some((32, true)), Box::new(addr), memarg.offset as usize));
+                stack.push(Expr::I64Load(
+                    Some((32, true)),
+                    Box::new(addr),
+                    memarg.offset as usize,
+                ));
             }
             I64Store { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I64Store(None, Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I64Store(
+                        None,
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I64Store8 { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I64Store(Some(8), Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I64Store(
+                        Some(8),
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I64Store16 { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I64Store(Some(16), Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I64Store(
+                        Some(16),
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I64Store32 { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::I64Store(Some(32), Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::I64Store(
+                        Some(32),
+                        Box::new(addr),
+                        Box::new(value),
+                        memarg.offset as usize,
+                    ),
+                );
             }
             I64Eqz => prim_op1(Primitive::I64Eqz, &mut stack),
             I64Eq => prim_op2(Primitive::I64Eq, &mut stack),
@@ -1089,8 +1264,11 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             F32Store { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::F32Store(Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::F32Store(Box::new(addr), Box::new(value), memarg.offset as usize),
+                );
             }
             F32Eq => prim_op2(Primitive::F32Eq, &mut stack),
             F32Ne => prim_op2(Primitive::F32Ne, &mut stack),
@@ -1114,8 +1292,11 @@ fn expressionify_function_body(module: &Module, func: &Function, all_locals: &[(
             F64Store { memarg } => {
                 let value = stack.pop().unwrap();
                 let addr = stack.pop().unwrap();
-                append_side_effect(&mut exprs, &mut stack,
-                                   Expr::F64Store(Box::new(addr), Box::new(value), memarg.offset as usize));
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::F64Store(Box::new(addr), Box::new(value), memarg.offset as usize),
+                );
             }
             F64Eq => prim_op2(Primitive::F64Eq, &mut stack),
             F64Ne => prim_op2(Primitive::F64Ne, &mut stack),
@@ -1161,13 +1342,18 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
     match expr {
         Const(s) => s.clone(),
         Global(idx) => format!("(global context {idx})"),
-        GlobalSet(idx, value) =>
-            format!("(setf (global context {idx}) {})",
-                    convert_expr(value, indent+(format!("(setf (global context {idx}) ").len()))),
+        GlobalSet(idx, value) => format!(
+            "(setf (global context {idx}) {})",
+            convert_expr(
+                value,
+                indent + (format!("(setf (global context {idx}) ").len())
+            )
+        ),
         Local(s) => s.clone(),
-        Setf(name, value) =>
-            format!("(setf {name} {})",
-                    convert_expr(value, indent+(format!("(setf {name} ").len()))),
+        Setf(name, value) => format!(
+            "(setf {name} {})",
+            convert_expr(value, indent + (format!("(setf {name} ").len()))
+        ),
         Call(name, args) => {
             let mut result = String::new();
             let mut indent = indent;
@@ -1208,9 +1394,9 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
                 result.push_str(")");
             }
             result.push_str(")\n");
-            result.push_str(&make_indent(indent+2));
+            result.push_str(&make_indent(indent + 2));
             result.push_str(" (call-indirect ");
-            result.push_str(&convert_expr(idx, indent+4));
+            result.push_str(&convert_expr(idx, indent + 4));
             result.push_str(" context");
             for e in temps.iter() {
                 result.push_str(" ");
@@ -1251,11 +1437,11 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
                 result.push_str(&convert_expr(test, indent));
                 result.push_str("))\n");
             }
-            result.push_str(&make_indent(indent+4));
-            result.push_str(&convert_expr(tru, indent+4));
+            result.push_str(&make_indent(indent + 4));
+            result.push_str(&convert_expr(tru, indent + 4));
             result.push_str("\n");
-            result.push_str(&make_indent(indent+4));
-            result.push_str(&convert_expr(fals, indent+4));
+            result.push_str(&make_indent(indent + 4));
+            result.push_str(&convert_expr(fals, indent + 4));
             result.push_str(")");
             result
         }
@@ -1281,47 +1467,43 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             }
             result
         }
-        Progn(exprs) => {
-            match exprs.len() {
-                0 => "()".to_string(),
-                1 => convert_expr(&exprs[0], indent),
-                _ => {
-                    let mut result = String::new();
-                    result.push_str("(progn");
-                    for e in exprs {
-                        result.push_str("\n");
-                        result.push_str(&make_indent(indent+2));
-                        result.push_str(&convert_expr(e, indent+2));
-                    }
-                    result.push_str(")");
-                    result
+        Progn(exprs) => match exprs.len() {
+            0 => "()".to_string(),
+            1 => convert_expr(&exprs[0], indent),
+            _ => {
+                let mut result = String::new();
+                result.push_str("(progn");
+                for e in exprs {
+                    result.push_str("\n");
+                    result.push_str(&make_indent(indent + 2));
+                    result.push_str(&convert_expr(e, indent + 2));
                 }
+                result.push_str(")");
+                result
             }
-        }
-        Prog1(value, exprs) => {
-            match exprs.len() {
-                0 => convert_expr(value, indent),
-                _ => {
-                    let mut result = String::new();
-                    result.push_str("(prog1 ");
-                    result.push_str(&convert_expr(value, indent+2));
-                    for e in exprs {
-                        result.push_str("\n");
-                        result.push_str(&make_indent(indent+2));
-                        result.push_str(&convert_expr(e, indent+2));
-                    }
-                    result.push_str(")");
-                    result
+        },
+        Prog1(value, exprs) => match exprs.len() {
+            0 => convert_expr(value, indent),
+            _ => {
+                let mut result = String::new();
+                result.push_str("(prog1 ");
+                result.push_str(&convert_expr(value, indent + 2));
+                for e in exprs {
+                    result.push_str("\n");
+                    result.push_str(&make_indent(indent + 2));
+                    result.push_str(&convert_expr(e, indent + 2));
                 }
+                result.push_str(")");
+                result
             }
-        }
+        },
         Block(name, e) => {
             let mut result = String::new();
             result.push_str("(block ");
             result.push_str(&name);
             result.push_str("\n");
-            result.push_str(&make_indent(indent+2));
-            result.push_str(&convert_expr(e, indent+2));
+            result.push_str(&make_indent(indent + 2));
+            result.push_str(&convert_expr(e, indent + 2));
             result.push_str(")");
             result
         }
@@ -1330,7 +1512,7 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             result.push_str("(return-from ");
             result.push_str(&name);
             result.push_str(" ");
-            result.push_str(&convert_expr(value, indent+2));
+            result.push_str(&convert_expr(value, indent + 2));
             result.push_str(")");
             result
         }
@@ -1339,8 +1521,8 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             result.push_str("(tagbody ");
             result.push_str(&name);
             result.push_str("\n");
-            result.push_str(&make_indent(indent+2));
-            result.push_str(&convert_expr(e, indent+2));
+            result.push_str(&make_indent(indent + 2));
+            result.push_str(&convert_expr(e, indent + 2));
             result.push_str(")");
             result
         }
@@ -1354,17 +1536,17 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
         Switch(index, default_target, targets) => {
             let mut result = String::new();
             result.push_str("(case ");
-            result.push_str(&convert_expr(index, indent+2));
+            result.push_str(&convert_expr(index, indent + 2));
             result.push_str("\n");
             for (i, e) in targets.iter().enumerate() {
-                result.push_str(&make_indent(indent+2));
+                result.push_str(&make_indent(indent + 2));
                 result.push_str(&format!("({i} "));
-                result.push_str(&convert_expr(e, indent+2));
+                result.push_str(&convert_expr(e, indent + 2));
                 result.push_str(&format!(")\n"));
             }
-            result.push_str(&make_indent(indent+2));
+            result.push_str(&make_indent(indent + 2));
             result.push_str(&format!("(otherwise "));
-            result.push_str(&convert_expr(default_target, indent+2));
+            result.push_str(&convert_expr(default_target, indent + 2));
             result.push_str("))");
             result
         }
@@ -1376,10 +1558,10 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             }
             result.push_str(" context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(")");
@@ -1393,14 +1575,14 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             }
             result.push_str(" context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(" ");
-            result.push_str(&convert_expr(value, indent+4));
+            result.push_str(&convert_expr(value, indent + 4));
             result.push_str(")");
             result
         }
@@ -1412,10 +1594,10 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             }
             result.push_str(" context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(")");
@@ -1429,14 +1611,14 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             }
             result.push_str(" context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(" ");
-            result.push_str(&convert_expr(value, indent+4));
+            result.push_str(&convert_expr(value, indent + 4));
             result.push_str(")");
             result
         }
@@ -1444,10 +1626,10 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             let mut result = String::new();
             result.push_str("(f32load context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(")");
@@ -1457,14 +1639,14 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             let mut result = String::new();
             result.push_str(&format!("(f32store context "));
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(" ");
-            result.push_str(&convert_expr(value, indent+4));
+            result.push_str(&convert_expr(value, indent + 4));
             result.push_str(")");
             result
         }
@@ -1472,10 +1654,10 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             let mut result = String::new();
             result.push_str("(f64load context ");
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(")");
@@ -1485,14 +1667,14 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             let mut result = String::new();
             result.push_str(&format!("(f64store context "));
             if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent+4));
+                result.push_str(&convert_expr(addr, indent + 4));
                 result.push_str(&format!(" {addend})"));
             }
             result.push_str(" ");
-            result.push_str(&convert_expr(value, indent+4));
+            result.push_str(&convert_expr(value, indent + 4));
             result.push_str(")");
             result
         }
@@ -1516,29 +1698,32 @@ fn convert_body_exprs(exprs: &[Expr], indent: usize) -> String {
 fn convert_function(module: &Module, func: &Function) -> Result<String> {
     let Some(body) = func.body.as_ref() else {
         let (module, name) = func.name.as_ref().unwrap();
-        return Ok(format!("(define-wasm-import {} ({}) ({}) {} {})",
-                          func.name(),
-                          {
-                              let mut result = String::new();
-                              for ty in func.ty.params.iter() {
-                                  if !result.is_empty() {
-                                      result.push_str(" ");
-                                  }
-                                  result.push_str(&convert_type(*ty));
-                              }
-                              result
-                          },
-                          {
-                              let mut result = String::new();
-                              for ty in func.ty.results.iter() {
-                                  if !result.is_empty() {
-                                      result.push_str(" ");
-                                  }
-                                  result.push_str(&convert_type(*ty));
-                              }
-                              result
-                          },
-                          symbolicate(&module), symbolicate(&name)));
+        return Ok(format!(
+            "(define-wasm-import {} ({}) ({}) {} {})",
+            func.name(),
+            {
+                let mut result = String::new();
+                for ty in func.ty.params.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            {
+                let mut result = String::new();
+                for ty in func.ty.results.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            symbolicate(&module),
+            symbolicate(&name)
+        ));
     };
 
     let mut output = String::new();
@@ -1548,22 +1733,24 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
         all_locals.push((format!("param-{i}"), *ty));
     }
     for (i, ty) in body.locals.iter().enumerate() {
-        all_locals.push((format!("local-{}", i+func.ty.params.len()), *ty));
+        all_locals.push((format!("local-{}", i + func.ty.params.len()), *ty));
     }
 
-    output.push_str(&format!("(define-wasm-function {} ({}) ({})\n",
-                             func.name(),
-                             convert_parameters(&func.ty.params),
-                             {
-                                 let mut result = String::new();
-                                 for ty in func.ty.results.iter() {
-                                     if !result.is_empty() {
-                                         result.push_str(" ");
-                                     }
-                                     result.push_str(&convert_type(*ty));
-                                 }
-                                 result
-                             }));
+    output.push_str(&format!(
+        "(define-wasm-function {} ({}) ({})\n",
+        func.name(),
+        convert_parameters(&func.ty.params),
+        {
+            let mut result = String::new();
+            for ty in func.ty.results.iter() {
+                if !result.is_empty() {
+                    result.push_str(" ");
+                }
+                result.push_str(&convert_type(*ty));
+            }
+            result
+        }
+    ));
     // Local variable bindings.
     // TODO: Type declarations.
     output.push_str("  (let (");
@@ -1586,8 +1773,10 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
         }
     }*/
 
-    let mut op_read = wasmparser::OperatorsReader::new(
-        wasmparser::BinaryReader::new(&body.code_bytes, body.code_offset));
+    let mut op_read = wasmparser::OperatorsReader::new(wasmparser::BinaryReader::new(
+        &body.code_bytes,
+        body.code_offset,
+    ));
 
     let exprs = expressionify_function_body(module, func, &all_locals, &mut op_read)?;
 
@@ -1614,10 +1803,16 @@ fn emit(module: &Module, package: &str) -> Result<String> {
     writeln!(&mut result)?;
 
     writeln!(&mut result, "(defun wasm2cl-create-context (personality)")?;
-    writeln!(&mut result, "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
-             module.memory_initial_size)?;
-    writeln!(&mut result, "        (table (make-array {} :initial-element nil))",
-             module.table_initial_size)?;
+    writeln!(
+        &mut result,
+        "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
+        module.memory_initial_size
+    )?;
+    writeln!(
+        &mut result,
+        "        (table (make-array {} :initial-element nil))",
+        module.table_initial_size
+    )?;
     write!(&mut result, "        (globals (vector")?;
     for global in module.globals.iter() {
         write!(&mut result, " {}", global.initializer)?;
@@ -1632,14 +1827,20 @@ fn emit(module: &Module, package: &str) -> Result<String> {
             write!(&mut result, " {byte}")?;
         }
         writeln!(&mut result, ")")?;
-        writeln!(&mut result, "                              '(simple-array (unsigned-byte 8) (*)))")?;
+        writeln!(
+            &mut result,
+            "                              '(simple-array (unsigned-byte 8) (*)))"
+        )?;
         writeln!(&mut result, "             :start1 {})", data.address)?;
     }
     for elt in module.active_elements.iter() {
         for (i, val) in elt.data.iter().enumerate() {
-            writeln!(&mut result, "    (setf (svref table {}) #'{})",
-                     elt.address + i,
-                     module.functions[*val].name())?;
+            writeln!(
+                &mut result,
+                "    (setf (svref table {}) #'{})",
+                elt.address + i,
+                module.functions[*val].name()
+            )?;
         }
     }
     writeln!(&mut result, "  (make-wasm-context :personality personality")?;
@@ -1653,13 +1854,16 @@ fn emit(module: &Module, package: &str) -> Result<String> {
         for ty in f.ty.params.iter() {
             write!(&mut result, " {}", convert_type(*ty))?;
         }
-        writeln!(&mut result, ") {}) {}))",
-               if f.ty.results.is_empty() {
-                   "t"
-               } else {
-                   convert_type(f.ty.results[0])
-               },
-               f.name())?;
+        writeln!(
+            &mut result,
+            ") {}) {}))",
+            if f.ty.results.is_empty() {
+                "t"
+            } else {
+                convert_type(f.ty.results[0])
+            },
+            f.name()
+        )?;
     }
     writeln!(&mut result)?;
 
@@ -1670,29 +1874,32 @@ fn emit(module: &Module, package: &str) -> Result<String> {
 
     for e in module.exports.iter() {
         let func = &module.functions[e.func_idx];
-        writeln!(&mut result, "(define-wasm-export {} ({}) ({}) {})",
-                 func.name(),
-                 {
-                     let mut result = String::new();
-                     for ty in func.ty.params.iter() {
-                         if !result.is_empty() {
-                             result.push_str(" ");
-                         }
-                         result.push_str(&convert_type(*ty));
-                     }
-                     result
-                 },
-                 {
-                     let mut result = String::new();
-                     for ty in func.ty.results.iter() {
-                         if !result.is_empty() {
-                             result.push_str(" ");
-                         }
-                         result.push_str(&convert_type(*ty));
-                     }
-                     result
-                 },
-                 symbolicate(&e.name))?;
+        writeln!(
+            &mut result,
+            "(define-wasm-export {} ({}) ({}) {})",
+            func.name(),
+            {
+                let mut result = String::new();
+                for ty in func.ty.params.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            {
+                let mut result = String::new();
+                for ty in func.ty.results.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            symbolicate(&e.name)
+        )?;
     }
 
     Ok(result)
@@ -1741,21 +1948,30 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
         for ty in f.ty.params.iter() {
             write!(&mut out, " {}", convert_type(*ty))?;
         }
-        writeln!(&mut out, ") {}) {}))",
-               if f.ty.results.is_empty() {
-                   "t"
-               } else {
-                   convert_type(f.ty.results[0])
-               },
-               f.name())?;
+        writeln!(
+            &mut out,
+            ") {}) {}))",
+            if f.ty.results.is_empty() {
+                "t"
+            } else {
+                convert_type(f.ty.results[0])
+            },
+            f.name()
+        )?;
     }
     writeln!(&mut out)?;
 
     writeln!(&mut out, "(defun wasm2cl-create-context (personality)")?;
-    writeln!(&mut out, "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
-             module.memory_initial_size)?;
-    writeln!(&mut out, "        (table (make-array {} :initial-element nil))",
-             module.table_initial_size)?;
+    writeln!(
+        &mut out,
+        "  (let ((memory (make-array {} :element-type '(unsigned-byte 8)))",
+        module.memory_initial_size
+    )?;
+    writeln!(
+        &mut out,
+        "        (table (make-array {} :initial-element nil))",
+        module.table_initial_size
+    )?;
     write!(&mut out, "        (globals (vector")?;
     for global in module.globals.iter() {
         write!(&mut out, " {}", global.initializer)?;
@@ -1770,14 +1986,20 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
             write!(&mut out, " {byte}")?;
         }
         writeln!(&mut out, ")")?;
-        writeln!(&mut out, "                              '(simple-array (unsigned-byte 8) (*)))")?;
+        writeln!(
+            &mut out,
+            "                              '(simple-array (unsigned-byte 8) (*)))"
+        )?;
         writeln!(&mut out, "             :start1 {})", data.address)?;
     }
     for elt in module.active_elements.iter() {
         for (i, val) in elt.data.iter().enumerate() {
-            writeln!(&mut out, "    (setf (svref table {}) #'{})",
-                     elt.address + i,
-                     module.functions[*val].name())?;
+            writeln!(
+                &mut out,
+                "    (setf (svref table {}) #'{})",
+                elt.address + i,
+                module.functions[*val].name()
+            )?;
         }
     }
     writeln!(&mut out, "  (make-wasm-context :personality personality")?;
@@ -1788,29 +2010,32 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
 
     for e in module.exports.iter() {
         let func = &module.functions[e.func_idx];
-        writeln!(&mut out, "(define-wasm-export {} ({}) ({}) {})",
-                 func.name(),
-                 {
-                     let mut result = String::new();
-                     for ty in func.ty.params.iter() {
-                         if !result.is_empty() {
-                             result.push_str(" ");
-                         }
-                         result.push_str(&convert_type(*ty));
-                     }
-                     result
-                 },
-                 {
-                     let mut result = String::new();
-                     for ty in func.ty.results.iter() {
-                         if !result.is_empty() {
-                             result.push_str(" ");
-                         }
-                         result.push_str(&convert_type(*ty));
-                     }
-                     result
-                 },
-                 symbolicate(&e.name))?;
+        writeln!(
+            &mut out,
+            "(define-wasm-export {} ({}) ({}) {})",
+            func.name(),
+            {
+                let mut result = String::new();
+                for ty in func.ty.params.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            {
+                let mut result = String::new();
+                for ty in func.ty.results.iter() {
+                    if !result.is_empty() {
+                        result.push_str(" ");
+                    }
+                    result.push_str(&convert_type(*ty));
+                }
+                result
+            },
+            symbolicate(&e.name)
+        )?;
     }
 
     Ok(())
