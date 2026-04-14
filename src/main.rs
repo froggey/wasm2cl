@@ -2048,7 +2048,7 @@ fn emit_functions(module: &Module, package: &str, path: &Path, functions_per_fil
 struct Cli {
     input: PathBuf,
     package: String,
-    #[arg(long, default_value = 100)]
+    #[arg(long, default_value = "100")]
     functions_per_file: usize,
 }
 
