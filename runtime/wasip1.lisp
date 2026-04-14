@@ -4,15 +4,18 @@
 
            #:|args_sizes_get| #:|args_get|
            #:|environ_sizes_get| #:|environ_get|
+           #:|fd_fdstat_set_flags|
            #:|fd_fdstat_get|
            #:|fd_prestat_get|
            #:|fd_prestat_dir_name|
            #:|fd_filestat_get|
            #:|fd_write| #:|fd_read|
+           #:|fd_seek|
            #:|fd_close|
            #:|path_open|
            #:|path_filestat_get|
            #:|path_create_directory|
+           #:|path_unlink_file|
            #:|proc_exit|))
 
 (in-package :wasm2cl-wasip1)
