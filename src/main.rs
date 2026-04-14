@@ -779,12 +779,24 @@ fn expressionify_function_body(
                     // End of the function
                     break;
                 };
-                unreachable = false;
+
+                let was_unreachable = unreachable;
+
+                // A non-loop block targeted by Br means the End is reachable (forward jump).
+                // A loop targeted by Br means the back-edge exists, but the fall-through End
+                // is still unreachable.
+                let becomes_reachable = was_unreachable
+                    && entry.targeted
+                    && !matches!(entry.kind, BlockKind::Loop);
+
+                unreachable = was_unreachable && !becomes_reachable;
+
                 // End of the current block.
-                if !matches!(entry.blockty, wasmparser::BlockType::Empty) {
+                // Only pop the block's result from the stack on reachable fall-through.
+                if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(stack.is_empty());
+                assert!(was_unreachable || stack.is_empty());
                 stack = entry.stack;
                 let mut final_expr = match entry.kind {
                     BlockKind::If => {
@@ -818,7 +830,7 @@ fn expressionify_function_body(
                         final_expr = Expr::Block(entry.name, Box::new(final_expr));
                     }
                 }
-                if matches!(entry.blockty, wasmparser::BlockType::Empty) {
+                if unreachable || matches!(entry.blockty, wasmparser::BlockType::Empty) {
                     append_side_effect(&mut exprs, &mut stack, final_expr);
                 } else {
                     stack.push(final_expr);
@@ -937,6 +949,7 @@ fn expressionify_function_body(
                     if matches!(block_stack[target].kind, BlockKind::Loop) {
                         Expr::Go(block_stack[target].name.clone())
                     } else {
+                        assert!(matches!(block_stack[target].blockty, wasmparser::BlockType::Empty));
                         Expr::ReturnFrom(
                             block_stack[target].name.clone(),
                             Box::new(Expr::Progn(vec![])),
@@ -948,7 +961,8 @@ fn expressionify_function_body(
                 let target = block_stack.len() - 1 - (relative_depth as usize);
                 let test = stack.pop().unwrap();
                 block_stack[target].targeted = true;
-                let value = if !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty)
+                let value = if !matches!(block_stack[target].kind, BlockKind::Loop) &&
+                    !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty)
                 {
                     stack.pop().unwrap()
                 } else {
