@@ -236,14 +236,26 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
         do (when file
              (close-file file))))
 
+(define-condition shadow-stack-underflow (error)
+  ((%inner :initarg :inner))
+  (:report "wasm shadow snack underflow detected"))
+
 (defun run-1 (package-designator personality)
   (let* ((package (or (find-package package-designator)
                       (error "Unknown package ~S" package-designator)))
          (context-create (find-symbol "WASM2CL-CREATE-CONTEXT" package))
-         (entry (find-symbol "_start" package)))
+         (entry (find-symbol "_start" package))
+         (context (funcall context-create personality)))
     (unwind-protect
-         (catch 'exit
-           (funcall entry (funcall context-create personality)))
+         (handler-bind
+             (#+sbcl
+              (sb-int:invalid-array-index-error
+                (lambda (c)
+                  ;; We just assume global 0 is the shadow stack pointer.
+                  (when (< (sign-extend (global context 0) 32) 0)
+                    (error 'shadow-stack-underflow :inner c)))))
+           (catch 'exit
+             (funcall entry context)))
       (drop-personality personality))))
 
 (defun run (package-designator &rest args)
