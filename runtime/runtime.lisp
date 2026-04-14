@@ -8,6 +8,8 @@
            #:wasm-context-personality #:wasm-context-memory
            #:wasm-context-table #:wasm-context-globals
 
+           #:sign-extend
+
            #:context #:global #:call-indirect #:select
            #:unreachable
            #:memory-copy #:memory-fill #:memory-grow #:memory-size
@@ -46,6 +48,15 @@
            #:i32wrapi64
            #:i32extend8s
            #:i32extend16s
+           #:i32truncf32u
+           #:i32truncf32s
+           #:i32truncf64u
+           #:i32truncf64s
+           #:i32truncsatf32u
+           #:i32truncsatf32s
+           #:i32truncsatf64u
+           #:i32truncsatf64s
+           #:i32reinterpretf32
            #:i64load #:i64store
            #:i64load8u #:i64load8s #:i64store8
            #:i64load16u #:i64load16s #:i64store16
@@ -82,6 +93,17 @@
            #:i64extend8s
            #:i64extend16s
            #:i64extend32s
+           #:i64extendi32u
+           #:i64extendi32s
+           #:i64truncf32u
+           #:i64truncf32s
+           #:i64truncf64u
+           #:i64truncf64s
+           #:i64truncsatf32u
+           #:i64truncsatf32s
+           #:i64truncsatf64u
+           #:i64truncsatf64s
+           #:i64reinterpretf64
            #:f32const
            #:f32load #:f32store
            #:f32eq #:f32eq.fused
@@ -94,10 +116,22 @@
            #:f32sub
            #:f32mul
            #:f32div
+           #:f32min
+           #:f32max
+           #:f32copysign
+           #:f32abs
+           #:f32neg
+           #:f32sqrt
+           #:f32floor
+           #:f32ceil
+           #:f32trunc
+           #:f32nearest
            #:f32converti32u
            #:f32converti32s
            #:f32converti64u
            #:f32converti64s
+           #:f32demotef64
+           #:f32reinterpreti32
            #:f64const
            #:f64load #:f64store
            #:f64eq #:f64eq.fused
@@ -110,10 +144,22 @@
            #:f64sub
            #:f64mul
            #:f64div
+           #:f64min
+           #:f64max
+           #:f64copysign
+           #:f64abs
+           #:f64neg
+           #:f64sqrt
+           #:f64floor
+           #:f64ceil
+           #:f64trunc
+           #:f64nearest
            #:f64converti32u
            #:f64converti32s
            #:f64converti64u
-           #:f64converti64s))
+           #:f64converti64s
+           #:f64reinterpreti64
+           #:f64promotef32))
 
 (in-package :wasm2cl)
 
@@ -265,6 +311,12 @@
      (defun ,name (x y)
        (,op (the ,type x) (the ,type y)))))
 
+(defmacro define-float-unop (name type op)
+  `(progn
+     (declaim (inline ,name))
+     (defun ,name (x)
+       (,op (the ,type x)))))
+
 (defun i32load (context address)
   (nibbles:ub32ref/le (wasm-context-memory context) address))
 
@@ -379,6 +431,35 @@
 (defun i32extend16s (x)
   (ldb (byte 32 0) (sign-extend x 16)))
 
+(defun i32truncf32u (x)
+  (ldb (byte 32 0) (truncate (the f32 x))))
+
+(defun i32truncf32s (x)
+  (ldb (byte 32 0) (truncate (the f32 x))))
+
+(defun i32truncf64u (x)
+  (ldb (byte 32 0) (truncate (the f64 x))))
+
+(defun i32truncf64s (x)
+  (ldb (byte 32 0) (truncate (the f64 x))))
+
+(defun i32truncsatf32u (x)
+  (ldb (byte 32 0) (min (max 0 (truncate (the f32 x))) (1- (ash 1 32)))))
+
+(defun i32truncsatf32s (x)
+  (ldb (byte 32 0) (min (max (ash -1 31) (truncate (the f32 x))) (1- (ash 1 31)))))
+
+(defun i32truncsatf64u (x)
+  (ldb (byte 32 0) (min (max 0 (truncate (the f64 x))) (1- (ash 1 32)))))
+
+(defun i32truncsatf64s (x)
+  (ldb (byte 32 0) (min (max (ash -1 31) (truncate (the f64 x))) (1- (ash 1 31)))))
+
+(defun i32reinterpretf32 (x)
+  (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
+    (declare (dynamic-extent tmp))
+    (setf (nibbles:ieee-single-ref/le tmp 0) x)
+    (nibbles:ub64ref/le tmp 0)))
 
 (define-conditional i64eqz (x) (eql (the i64 x) 0))
 (define-conditional i64eq (x y) (eql (the i64 x) (the i64 y)))
@@ -436,6 +517,42 @@
 (defun i64extend32s (x)
   (ldb (byte 64 0) (sign-extend x 32)))
 
+(defun i64extendi32u (x)
+  x)
+
+(defun i64extendi32s (x)
+  (ldb (byte 64 0) (sign-extend x 32)))
+
+(defun i64truncf32u (x)
+  (ldb (byte 64 0) (truncate (the f32 x))))
+
+(defun i64truncf32s (x)
+  (ldb (byte 64 0) (truncate (the f32 x))))
+
+(defun i64truncf64u (x)
+  (ldb (byte 64 0) (truncate (the f64 x))))
+
+(defun i64truncf64s (x)
+  (ldb (byte 64 0) (truncate (the f64 x))))
+
+(defun i64truncsatf32u (x)
+  (ldb (byte 64 0) (min (max 0 (truncate (the f32 x))) (1- (ash 1 64)))))
+
+(defun i64truncsatf32s (x)
+  (ldb (byte 64 0) (min (max (ash -1 63) (truncate (the f32 x))) (1- (ash 1 63)))))
+
+(defun i64truncsatf64u (x)
+  (ldb (byte 64 0) (min (max 0 (truncate (the f64 x))) (1- (ash 1 64)))))
+
+(defun i64truncsatf64s (x)
+  (ldb (byte 64 0) (min (max (ash -1 63) (truncate (the f64 x))) (1- (ash 1 63)))))
+
+(defun i64reinterpretf64 (x)
+  (let ((tmp (make-array 8 :element-type '(unsigned-byte 8))))
+    (declare (dynamic-extent tmp))
+    (setf (nibbles:ieee-double-ref/le tmp 0) x)
+    (nibbles:ub64ref/le tmp 0)))
+
 (defun f32load (context address)
   (nibbles:ieee-single-ref/le (wasm-context-memory context) address))
 
@@ -452,6 +569,16 @@
 (define-float-binop f32sub f32 -)
 (define-float-binop f32mul f32 *)
 (define-float-binop f32div f32 /)
+(define-float-binop f32min f32 min)
+(define-float-binop f32max f32 max)
+;; F32Copysign
+(define-float-unop f32abs f32 abs)
+(define-float-unop f32neg f32 neg)
+(define-float-unop f32sqrt f32 sqrt)
+(define-float-unop f32floor f32 ffloor)
+(define-float-unop f32ceil f32 fceiling)
+(define-float-unop f32trunc f32 ftruncate)
+(define-float-unop f32nearest f32 fround)
 
 (defun f32converti32u (x)
   (float (the i32 x) 0.0f0))
@@ -464,6 +591,15 @@
 
 (defun f32converti64s (x)
   (float (sign-extend (the i64 x) 64) 0.0f0))
+
+(defun f32reinterpreti32 (value)
+  (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
+    (declare (dynamic-extent tmp))
+    (setf (nibbles:ub32ref/le tmp 0) value)
+    (nibbles:ieee-single-ref/le tmp 0)))
+
+(defun f32demotef64 (x)
+  (float (the f64 x) 0.0f0))
 
 (defun f64load (context address)
   (nibbles:ieee-double-ref/le (wasm-context-memory context) address))
@@ -481,6 +617,16 @@
 (define-float-binop f64sub f64 -)
 (define-float-binop f64mul f64 *)
 (define-float-binop f64div f64 /)
+(define-float-binop f64min f64 min)
+(define-float-binop f64max f64 max)
+;; F64Copysign
+(define-float-unop f64abs f64 abs)
+(define-float-unop f64neg f64 neg)
+(define-float-unop f64sqrt f64 sqrt)
+(define-float-unop f64floor f64 ffloor)
+(define-float-unop f64ceil f64 fceiling)
+(define-float-unop f64trunc f64 ftruncate)
+(define-float-unop f64nearest f64 fround)
 
 (defun f64converti32u (x)
   (float (the i32 x) 0.0d0))
@@ -493,3 +639,12 @@
 
 (defun f64converti64s (x)
   (float (sign-extend (the i64 x) 64) 0.0d0))
+
+(defun f64reinterpreti64 (value)
+  (let ((tmp (make-array 8 :element-type '(unsigned-byte 8))))
+    (declare (dynamic-extent tmp))
+    (setf (nibbles:ub64ref/le tmp 0) (the f64 value))
+    (nibbles:ieee-double-ref/le tmp 0)))
+
+(defun f64promotef32 (x)
+  (float (the f32 x) 0.0d0))
