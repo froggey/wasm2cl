@@ -1872,7 +1872,7 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
     Ok(output)
 }
 
-fn emit_system(module: &Module, package_name: &str, path: &Path) -> Result<()> {
+fn emit_system(module: &Module, package_name: &str, path: &Path, functions_per_file: usize) -> Result<()> {
     use std::io::Write;
 
     let file = fs::File::create(path.join(format!("{package_name}.asd")))?;
@@ -1883,11 +1883,12 @@ fn emit_system(module: &Module, package_name: &str, path: &Path) -> Result<()> {
     writeln!(&mut out, "  :serial t")?;
     writeln!(&mut out, "  :components ((:file \"main\")")?;
 
-    for i in 0..(module.functions.len().div_ceil(100)) {
+    for i in 0..(module.functions.len().div_ceil(functions_per_file)) {
         writeln!(&mut out, "               (:file \"functions-{i:04}\")")?;
     }
     writeln!(&mut out, "))")?;
 
+    out.flush()?;
     Ok(())
 }
 
@@ -2005,13 +2006,14 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
         )?;
     }
 
+    out.flush()?;
     Ok(())
 }
 
-fn emit_functions(module: &Module, package: &str, path: &Path) -> Result<()> {
+fn emit_functions(module: &Module, package: &str, path: &Path, functions_per_file: usize) -> Result<()> {
     use std::io::Write;
 
-    for (i, fns) in module.functions.chunks(100).enumerate() {
+    for (i, fns) in module.functions.chunks(functions_per_file).enumerate() {
         let file = fs::File::create(path.join(format!("functions-{i:04}.lisp")))?;
         let mut out = BufWriter::new(file);
 
@@ -2022,6 +2024,7 @@ fn emit_functions(module: &Module, package: &str, path: &Path) -> Result<()> {
             writeln!(&mut out, "{}", convert_function(module, f)?)?;
             writeln!(&mut out)?;
         }
+        out.flush()?;
     }
 
     Ok(())
@@ -2031,6 +2034,8 @@ fn emit_functions(module: &Module, package: &str, path: &Path) -> Result<()> {
 struct Cli {
     input: PathBuf,
     package: String,
+    #[arg(long, default_value = 100)]
+    functions_per_file: usize,
 }
 
 fn main() -> Result<()> {
@@ -2051,9 +2056,9 @@ fn main() -> Result<()> {
     }
     fs::create_dir_all(dir)?;
 
-    emit_system(&module, &cli.package, dir)?;
+    emit_system(&module, &cli.package, dir, cli.functions_per_file)?;
     emit_main(&module, &cli.package, dir)?;
-    emit_functions(&module, &cli.package, dir)?;
+    emit_functions(&module, &cli.package, dir, cli.functions_per_file)?;
 
     //fs::write(&cli.output, emit(&module, &cli.package)?)?;
 
