@@ -767,14 +767,17 @@ fn expressionify_function_body(
                 });
             }
             Else => {
+                let was_unreachable = unreachable;
                 unreachable = false;
                 let idx = block_stack.len() - 1;
                 assert!(matches!(block_stack[idx].kind, BlockKind::If));
                 assert!(block_stack[idx].then.is_none());
-                if !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty) {
+                if !was_unreachable
+                    && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
+                {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(stack.is_empty());
+                assert!(was_unreachable || stack.is_empty());
                 block_stack[idx].then = Some(std::mem::take(&mut exprs));
             }
             End => {
