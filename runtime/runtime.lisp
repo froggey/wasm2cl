@@ -7,6 +7,7 @@
            #:make-wasm-context #:wasm-context
            #:wasm-context-personality #:wasm-context-memory
            #:wasm-context-table #:wasm-context-globals
+           #:wasm-context-start-fn
 
            #:sign-extend
 
@@ -176,7 +177,8 @@
   (memory (error "memory not supplied") :type octet-vector)
   (table (error "table not supplied") :type simple-vector)
   (globals (error "globals not supplied") :type simple-vector)
-  personality)
+  personality
+  start-fn)
 
 (defmacro define-wasm-function (name args return-type &body body)
   (declare (ignore return-type))

@@ -1,6 +1,5 @@
 use clap::Parser as ClapParser;
 use std::{
-    fmt::Write,
     fs,
     io::BufWriter,
     path::{Path, PathBuf},
@@ -77,6 +76,7 @@ struct Module {
     active_data: Vec<ActiveData>,
     active_elements: Vec<ActiveElement>,
     globals: Vec<Global>,
+    start_fn: Option<usize>,
 }
 
 fn parse_type(ty: &wasmparser::ValType) -> Result<Type> {
@@ -104,6 +104,7 @@ fn parse(bytes: &[u8]) -> Result<Module> {
     let mut memory_initial_size = 0;
     let mut globals = vec![];
     let mut table_initial_size = 0;
+    let mut start_fn = None;
 
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.context("malformed wasm payload")? {
@@ -284,6 +285,7 @@ fn parse(bytes: &[u8]) -> Result<Module> {
             }
             StartSection { func, .. } => {
                 println!("Start Section {func:?}");
+                start_fn = Some(func as usize);
             }
             CodeSectionEntry(body) => {
                 let mut locals = vec![];
@@ -378,6 +380,7 @@ fn parse(bytes: &[u8]) -> Result<Module> {
         active_data,
         active_elements,
         globals,
+        start_fn,
     })
 }
 
@@ -1985,6 +1988,9 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
         }
     }
     writeln!(&mut out, "  (make-wasm-context :personality personality")?;
+    if let Some(f) = module.start_fn {
+        writeln!(&mut out, "                     :start-fn #'{}", module.functions[f].name())?;
+    }
     writeln!(&mut out, "                     :memory memory")?;
     writeln!(&mut out, "                     :globals globals")?;
     writeln!(&mut out, "                     :table table)))")?;

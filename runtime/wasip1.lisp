@@ -258,6 +258,9 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
                   (when (< (sign-extend (global context 0) 32) 0)
                     (error 'shadow-stack-underflow :inner c)))))
            (catch 'exit
+             (let ((start-fn (wasm-context-start-fn context)))
+               (when start-fn
+                 (funcall start-fn context)))
              (funcall entry context)))
       (drop-personality personality))))
 
