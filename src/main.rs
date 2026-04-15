@@ -791,9 +791,8 @@ fn expressionify_function_body(
                 // A non-loop block targeted by Br means the End is reachable (forward jump).
                 // A loop targeted by Br means the back-edge exists, but the fall-through End
                 // is still unreachable.
-                let becomes_reachable = was_unreachable
-                    && entry.targeted
-                    && !matches!(entry.kind, BlockKind::Loop);
+                let becomes_reachable =
+                    was_unreachable && entry.targeted && !matches!(entry.kind, BlockKind::Loop);
 
                 unreachable = was_unreachable && !becomes_reachable;
 
@@ -955,7 +954,10 @@ fn expressionify_function_body(
                     if matches!(block_stack[target].kind, BlockKind::Loop) {
                         Expr::Go(block_stack[target].name.clone())
                     } else {
-                        assert!(matches!(block_stack[target].blockty, wasmparser::BlockType::Empty));
+                        assert!(matches!(
+                            block_stack[target].blockty,
+                            wasmparser::BlockType::Empty
+                        ));
                         Expr::ReturnFrom(
                             block_stack[target].name.clone(),
                             Box::new(Expr::Progn(vec![])),
@@ -967,8 +969,8 @@ fn expressionify_function_body(
                 let target = block_stack.len() - 1 - (relative_depth as usize);
                 let test = stack.pop().unwrap();
                 block_stack[target].targeted = true;
-                let value = if !matches!(block_stack[target].kind, BlockKind::Loop) &&
-                    !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty)
+                let value = if !matches!(block_stack[target].kind, BlockKind::Loop)
+                    && !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty)
                 {
                     stack.pop().unwrap()
                 } else {
@@ -1892,7 +1894,12 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
     Ok(output)
 }
 
-fn emit_system(module: &Module, package_name: &str, path: &Path, functions_per_file: usize) -> Result<()> {
+fn emit_system(
+    module: &Module,
+    package_name: &str,
+    path: &Path,
+    functions_per_file: usize,
+) -> Result<()> {
     use std::io::Write;
 
     let file = fs::File::create(path.join(format!("{package_name}.asd")))?;
@@ -1992,7 +1999,11 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
     }
     writeln!(&mut out, "  (make-wasm-context :personality personality")?;
     if let Some(f) = module.start_fn {
-        writeln!(&mut out, "                     :start-fn #'{}", module.functions[f].name())?;
+        writeln!(
+            &mut out,
+            "                     :start-fn #'{}",
+            module.functions[f].name()
+        )?;
     }
     writeln!(&mut out, "                     :memory memory")?;
     writeln!(&mut out, "                     :globals globals")?;
@@ -2033,7 +2044,12 @@ fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn emit_functions(module: &Module, package: &str, path: &Path, functions_per_file: usize) -> Result<()> {
+fn emit_functions(
+    module: &Module,
+    package: &str,
+    path: &Path,
+    functions_per_file: usize,
+) -> Result<()> {
     use std::io::Write;
 
     for (i, fns) in module.functions.chunks(functions_per_file).enumerate() {
