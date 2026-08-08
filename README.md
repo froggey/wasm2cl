@@ -26,3 +26,13 @@ cargo run --release -- target/wasm32-wasip1/release/wasm2cl.wasm wasm2cl-wasm2cl
 ## TODO
 
 Run the standard conformance tests against this, ideally in CI too.
+
+## Ports
+
+There are ports of a few libraries and programs.
+They require `wasi-sdk` to build, tested with 33.0.
+
+```bash
+cd ports
+./build.sh <path-to-wasi-sdk>
+```
