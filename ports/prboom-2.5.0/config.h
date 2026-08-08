@@ -1,6 +1,9 @@
 /* config.h.  Generated from config.h.in by configure.  */
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Define if building universal (internal helper macro) */
+/* #undef AC_APPLE_UNIVERSAL_BUILD */
+
 /* Uncomment this to exhaustively run memory checks while the game is running
    (this is EXTREMELY slow). */
 /* #undef CHECKHEAP */
@@ -12,50 +15,47 @@
 #define DOOMWADDIR "/usr/local/share/games/doom"
 
 /* Define if you are building with OpenGL support */
-#define GL_DOOM 1
+/* #undef GL_DOOM */
 
 /* Define to 1 if you have the <asm/byteorder.h> header file. */
-#define HAVE_ASM_BYTEORDER_H 1
+/* #undef HAVE_ASM_BYTEORDER_H */
 
-/* Define to 1 if you have the declaration of `sys_siglist', and to 0 if you
+/* Define to 1 if you have the declaration of 'sys_siglist', and to 0 if you
    don't. */
-#define HAVE_DECL_SYS_SIGLIST 1
+#define HAVE_DECL_SYS_SIGLIST 0
 
-/* Define to 1 if you have the `getopt' function. */
+/* Define to 1 if you have the 'getopt' function. */
 #define HAVE_GETOPT 1
 
-/* Define to 1 if you have the `inet_aton' function. */
+/* Define to 1 if you have the 'inet_aton' function. */
 #define HAVE_INET_ATON 1
 
-/* Define to 1 if you have the `inet_ntop' function. */
+/* Define to 1 if you have the 'inet_ntop' function. */
 #define HAVE_INET_NTOP 1
 
-/* Define to 1 if you have the `inet_pton' function. */
+/* Define to 1 if you have the 'inet_pton' function. */
 #define HAVE_INET_PTON 1
 
 /* Define to 1 if you have the <inttypes.h> header file. */
-#define HAVE_INTTYPES_H 1
+/* #undef HAVE_INTTYPES_H */
 
 /* Define if you have struct sockaddr_in6 */
 #define HAVE_IPv6 1
 
-/* Define to 1 if you have the `m' library (-lm). */
+/* Define to 1 if you have the 'm' library (-lm). */
 #define HAVE_LIBM 1
 
-/* Define to 1 if you have the `png' library (-lpng). */
-#define HAVE_LIBPNG 1
+/* Define to 1 if you have the 'png' library (-lpng). */
+/* #undef HAVE_LIBPNG */
 
-/* Define to 1 if you have the `SDL_mixer' library (-lSDL_mixer). */
+/* Define to 1 if you have the 'SDL_mixer' library (-lSDL_mixer). */
 /* #undef HAVE_LIBSDL_MIXER */
 
 /* Define if you have the SDL net library -lSDL_net */
 /* #undef HAVE_LIBSDL_NET */
 
-/* Define to 1 if you have the <memory.h> header file. */
-#define HAVE_MEMORY_H 1
-
-/* Define to 1 if you have the `mmap' function. */
-#define HAVE_MMAP 1
+/* Define to 1 if you have the 'mmap' function. */
+/* #undef HAVE_MMAP */
 
 /* Define if you want network game support */
 /* #undef HAVE_NET */
@@ -63,43 +63,46 @@
 /* Define to 1 if you have the <sched.h> header file. */
 #define HAVE_SCHED_H 1
 
-/* Define to 1 if you have the `sched_setaffinity' function. */
-#define HAVE_SCHED_SETAFFINITY 1
+/* Define to 1 if you have the 'sched_setaffinity' function. */
+/* #undef HAVE_SCHED_SETAFFINITY */
 
-/* Define to 1 if you have the `SDL_JoystickGetAxis' function. */
+/* Define to 1 if you have the 'SDL_JoystickGetAxis' function. */
 #define HAVE_SDL_JOYSTICKGETAXIS 1
 
-/* Define to 1 if you have the `snprintf' function. */
+/* Define to 1 if you have the 'snprintf' function. */
 #define HAVE_SNPRINTF 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
-#define HAVE_STDINT_H 1
+/* #undef HAVE_STDINT_H */
+
+/* Define to 1 if you have the <stdio.h> header file. */
+/* #undef HAVE_STDIO_H */
 
 /* Define to 1 if you have the <stdlib.h> header file. */
-#define HAVE_STDLIB_H 1
+/* #undef HAVE_STDLIB_H */
 
 /* Define to 1 if you have the <strings.h> header file. */
-#define HAVE_STRINGS_H 1
+/* #undef HAVE_STRINGS_H */
 
 /* Define to 1 if you have the <string.h> header file. */
-#define HAVE_STRING_H 1
+/* #undef HAVE_STRING_H */
 
 /* Define to 1 if you have the <sys/stat.h> header file. */
-#define HAVE_SYS_STAT_H 1
+/* #undef HAVE_SYS_STAT_H */
 
 /* Define to 1 if you have the <sys/types.h> header file. */
-#define HAVE_SYS_TYPES_H 1
+/* #undef HAVE_SYS_TYPES_H */
 
 /* Define to 1 if you have <sys/wait.h> that is POSIX.1 compatible. */
-#define HAVE_SYS_WAIT_H 1
+/* #undef HAVE_SYS_WAIT_H */
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
 
-/* Define to 1 if you have the `usleep' function. */
+/* Define to 1 if you have the 'usleep' function. */
 #define HAVE_USLEEP 1
 
-/* Define to 1 if you have the `vsnprintf' function. */
+/* Define to 1 if you have the 'vsnprintf' function. */
 #define HAVE_VSNPRINTF 1
 
 /* Uncomment this to cause heap dumps to be generated. Only useful if
@@ -110,7 +113,7 @@
 #define HIGHRES 1
 
 /* Define on targets supporting 386 assembly */
-#define I386_ASM 1
+/* #undef I386_ASM */
 
 /* Define this to see real-time memory allocation statistics, and enable extra
    debugging features */
@@ -137,6 +140,9 @@
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "prboom"
 
+/* Define to the home page for this package. */
+#define PACKAGE_URL ""
+
 /* Define to the version of this package. */
 #define PACKAGE_VERSION "2.5.0"
 
@@ -154,18 +160,20 @@
    overhead if a posible error is detected. */
 #define SIMPLECHECKS 1
 
-/* Define to 1 if you have the ANSI C header files. */
-#define STDC_HEADERS 1
+/* Define to 1 if all of the C89 standard headers exist (not just the ones
+   required in a freestanding environment). This macro is provided for
+   backward compatibility; new code need not use it. */
+/* #undef STDC_HEADERS */
 
 /* Defining this causes time stamps to be created each time a lump is locked,
    and lumps locked for long periods of time are reported */
 /* #undef TIMEDIAG */
 
 /* Define if you want to use gluImageScale */
-#define USE_GLU_IMAGESCALE 1
+/* #undef USE_GLU_IMAGESCALE */
 
 /* Define if you want to use gluBuild2DMipmaps */
-#define USE_GLU_MIPMAP 1
+/* #undef USE_GLU_MIPMAP */
 
 /* Define if you want to use the SDL net lib */
 /* #undef USE_SDL_NET */
@@ -176,27 +184,35 @@
 /* Define if using the dmalloc debugging malloc package */
 /* #undef WITH_DMALLOC */
 
-/* Define to 1 if your processor stores words with the most significant byte
-   first (like Motorola and SPARC, unlike Intel and VAX). */
-/* #undef WORDS_BIGENDIAN */
+/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
+   significant byte first (like Motorola and SPARC, unlike Intel). */
+#if defined AC_APPLE_UNIVERSAL_BUILD
+# if defined __BIG_ENDIAN__
+#  define WORDS_BIGENDIAN 1
+# endif
+#else
+# ifndef WORDS_BIGENDIAN
+/* #  undef WORDS_BIGENDIAN */
+# endif
+#endif
 
 /* Define this to perform id checks on zone blocks, to detect corrupted and
    illegally freed blocks */
 #define ZONEIDCHECK 1
 
-/* Define to empty if `const' does not conform to ANSI C. */
+/* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */
 
-/* Define to `int' if <sys/types.h> doesn't define. */
-/* #undef gid_t */
+/* Define as 'int' if <sys/types.h> doesn't define. */
+#define gid_t int
 
-/* Define to `__inline__' or `__inline' if that's what the C compiler
+/* Define to '__inline__' or '__inline' if that's what the C compiler
    calls it, or to nothing if 'inline' is not supported under any name.  */
 #ifndef __cplusplus
 /* #undef inline */
 #endif
 
-/* Define to `unsigned int' if <sys/types.h> does not define. */
+/* Define as 'unsigned int' if <stddef.h> doesn't define. */
 /* #undef size_t */
 
 /* Define to strcasecmp, if we have it */
@@ -205,5 +221,5 @@
 /* Define to strncasecmp, if we have it */
 #define strnicmp strncasecmp
 
-/* Define to `int' if <sys/types.h> doesn't define. */
-/* #undef uid_t */
+/* Define as 'int' if <sys/types.h> doesn't define. */
+#define uid_t int
