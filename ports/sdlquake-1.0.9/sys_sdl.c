@@ -12,11 +12,13 @@
 #include <ctype.h>
 #include <errno.h>
 #ifndef __WIN32__
+#ifndef __wasm__
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
+#endif
 #endif
 
 #include "quakedef.h"
