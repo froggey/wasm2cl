@@ -477,7 +477,7 @@
   (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
     (setf (nibbles:ieee-single-ref/le tmp 0) x)
-    (nibbles:ub64ref/le tmp 0)))
+    (nibbles:ub32ref/le tmp 0)))
 
 (define-conditional i64eqz (x) (eql (the i64 x) 0))
 (define-conditional i64eq (x y) (eql (the i64 x) (the i64 y)))
