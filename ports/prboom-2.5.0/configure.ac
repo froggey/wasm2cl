@@ -34,8 +34,13 @@ fi
 AC_DEFINE_UNQUOTED(DOOMWADDIR,"$DOOMWADDIR",[Define to be the path where Doom WADs are stored])
 
 dnl --- Check for programs
+dnl Pin the C standard before AC_PROG_CC probes for one — recent autoconf
+dnl defaults to preferring C23, which is too strict for this codebase.
+ac_cv_prog_cc_c23=no
+
 AC_PROG_CC
 AC_PROG_LN_S
+AC_PROG_AR
 AC_PROG_RANLIB
 
 if test "x$GCC" = "xyes"; then
