@@ -11,15 +11,18 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
-#ifndef __WIN32__
 #ifndef __wasm__
+#ifndef __WIN32__
 #include <sys/ipc.h>
 #include <sys/shm.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
 #endif
 #endif
+#ifndef __WIN32__
+#include <sys/stat.h>
+#endif
+#include "SDL.h"
 
 #include "quakedef.h"
 
@@ -438,7 +441,7 @@ Sys_MakeCodeWriteable
 */
 void Sys_MakeCodeWriteable (unsigned long startaddr, unsigned long length)
 {
-
+#ifndef __wasm__
 	int r;
 	unsigned long addr;
 	int psize = getpagesize();
@@ -451,6 +454,6 @@ void Sys_MakeCodeWriteable (unsigned long startaddr, unsigned long length)
 
 	if (r < 0)
     		Sys_Error("Protection change failed\n");
-
+#endif
 }
 

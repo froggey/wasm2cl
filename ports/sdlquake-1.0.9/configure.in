@@ -11,6 +11,9 @@ AC_CANONICAL_TARGET
 dnl Check for tools
 
 AC_PROG_MAKE_SET
+dnl Pin the C standard before AC_PROG_CC probes for one — recent autoconf
+dnl defaults to preferring C23, which is too strict for this codebase.
+ac_cv_prog_cc_c23=no
 AC_PROG_CC
 AC_PROG_INSTALL
 
