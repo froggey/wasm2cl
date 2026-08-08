@@ -590,7 +590,7 @@
 (define-float-binop f32max f32 max)
 ;; F32Copysign
 (define-float-unop f32abs f32 abs)
-(define-float-unop f32neg f32 neg)
+(define-float-unop f32neg f32 (lambda (x) (- x)))
 (define-float-unop f32sqrt f32 sqrt)
 (define-float-unop f32floor f32 ffloor)
 (define-float-unop f32ceil f32 fceiling)
@@ -638,7 +638,7 @@
 (define-float-binop f64max f64 max)
 ;; F64Copysign
 (define-float-unop f64abs f64 abs)
-(define-float-unop f64neg f64 neg)
+(define-float-unop f64neg f64 (lambda (x) (- x)))
 (define-float-unop f64sqrt f64 sqrt)
 (define-float-unop f64floor f64 ffloor)
 (define-float-unop f64ceil f64 fceiling)
