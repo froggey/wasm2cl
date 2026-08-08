@@ -1367,6 +1367,6 @@ AS_IF([test "$am_cv_xargs_n_works" = yes], [am__xargs_n='xargs -n'], [dnl
 AC_SUBST(am__xargs_n)
 ])
 
-m4_include([../sdl-1.2/sdl.m4])
+m4_include([../SDL-1.2.15/sdl.m4])
 m4_include([autotools/ac_c_compile_flags.m4])
 m4_include([autotools/ac_cpu_optimisations.m4])

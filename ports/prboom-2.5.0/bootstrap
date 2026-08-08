@@ -3,7 +3,7 @@
 # cphipps - short script to start building from a maintainer-clean'ed tree
 #
 mkdir -p autotools
-aclocal -I autotools
+aclocal -I autotools -I ../SDL-1.2.15
 autoheader
 automake --add-missing
 autoconf
