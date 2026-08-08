@@ -756,3 +756,147 @@ pub fn emit_functions(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expr::CatchHandler;
+
+    #[test]
+    fn convert_type_maps_all_types() {
+        assert_eq!(convert_type(Type::I32), "i32");
+        assert_eq!(convert_type(Type::I64), "i64");
+        assert_eq!(convert_type(Type::F32), "f32");
+        assert_eq!(convert_type(Type::F64), "f64");
+        assert_eq!(convert_type(Type::V128), "v128");
+        assert_eq!(convert_type(Type::FuncRef), "func-ref");
+        assert_eq!(convert_type(Type::ExternRef), "extern-ref");
+        assert_eq!(convert_type(Type::ExnRef), "exnref");
+    }
+
+    #[test]
+    fn initializer_for_type_maps_all_types() {
+        assert_eq!(initializer_for_type(Type::I32), "0");
+        assert_eq!(initializer_for_type(Type::I64), "0");
+        assert_eq!(initializer_for_type(Type::F32), "0.0f0");
+        assert_eq!(initializer_for_type(Type::F64), "0.0d0");
+        assert_eq!(initializer_for_type(Type::V128), "0");
+        assert_eq!(initializer_for_type(Type::FuncRef), "nil");
+        assert_eq!(initializer_for_type(Type::ExternRef), "nil");
+        // exnref locals are conditions: nil means "no exception yet".
+        assert_eq!(initializer_for_type(Type::ExnRef), "nil");
+    }
+
+    #[test]
+    fn make_indent_repeats_spaces() {
+        assert_eq!(make_indent(0), "");
+        assert_eq!(make_indent(2), "  ");
+        assert_eq!(make_indent(4), "    ");
+    }
+
+    #[test]
+    fn convert_parameters_formats_param_list() {
+        assert_eq!(
+            convert_parameters(&[Type::I32, Type::F64]),
+            "(param-0 i32) (param-1 f64)"
+        );
+        assert_eq!(convert_parameters(&[]), "");
+    }
+
+    #[test]
+    fn convert_expr_simple_goldens() {
+        assert_eq!(convert_expr(&Expr::Const("42".into()), 0), "42");
+        assert_eq!(convert_expr(&Expr::Local("param-0".into()), 0), "param-0");
+        assert_eq!(
+            convert_expr(
+                &Expr::Setf("local-0".into(), Box::new(Expr::Const("1".into()))),
+                0
+            ),
+            "(setf local-0 1)"
+        );
+        assert_eq!(
+            convert_expr(
+                &Expr::Prim(
+                    crate::expr::Primitive::I32Add,
+                    vec![Expr::Local("x".into()), Expr::Const("2".into())],
+                ),
+                0
+            ),
+            "(I32Add x 2)"
+        );
+    }
+
+    #[test]
+    fn convert_expr_values_golden() {
+        let expr = Expr::Values(vec![Expr::Const("1".into()), Expr::Const("2".into())]);
+        assert_eq!(convert_expr(&expr, 0), "(values 1 2)");
+    }
+
+    #[test]
+    fn convert_expr_throw_ref_golden() {
+        let expr = Expr::ThrowRef(Box::new(Expr::Local("try-1-exn-ref".into())));
+        assert_eq!(convert_expr(&expr, 0), "(error try-1-exn-ref)");
+    }
+
+    #[test]
+    fn convert_expr_setf_values_golden() {
+        // The locals come pre-ordered from expressionify (block results were
+        // already reversed there); emission just joins them.
+        let expr = Expr::SetfValues {
+            locals: vec!["local-3".into(), "local-4".into()],
+            value: Box::new(Expr::Values(vec![
+                Expr::Const("1".into()),
+                Expr::Const("2".into()),
+            ])),
+        };
+        assert_eq!(
+            convert_expr(&expr, 0),
+            "(setf (values local-3 local-4)\n  (values 1 2))"
+        );
+    }
+
+    #[test]
+    fn convert_expr_try_catch_ref_golden() {
+        let expr = Expr::Try {
+            name: "try-1".into(),
+            body: Box::new(Expr::Const("42".into())),
+            handlers: vec![CatchHandler {
+                tag: Some(0),
+                vars: vec!["try-1-exn-0".into()],
+                exnref_var: Some("try-1-exn-ref".into()),
+                body: Box::new(Expr::Values(vec![
+                    Expr::Local("try-1-exn-0".into()),
+                    Expr::Local("try-1-exn-ref".into()),
+                ])),
+            }],
+        };
+        assert_eq!(
+            convert_expr(&expr, 0),
+            "(wasm-try (try-1-exn)\n  42\n  (wasm-catch-ref 0 (try-1-exn-0) try-1-exn-ref\n    (values try-1-exn-0 try-1-exn-ref)))"
+        );
+    }
+
+    #[test]
+    fn convert_expr_try_catch_all_ref_golden() {
+        let expr = Expr::Try {
+            name: "try-9".into(),
+            body: Box::new(Expr::Progn(vec![])),
+            handlers: vec![CatchHandler {
+                tag: None,
+                vars: vec![],
+                exnref_var: Some("try-9-exn-ref".into()),
+                body: Box::new(Expr::Local("try-9-exn-ref".into())),
+            }],
+        };
+        assert_eq!(
+            convert_expr(&expr, 0),
+            "(wasm-try (try-9-exn)\n  ()\n  (wasm-catch-all-ref try-9-exn-ref\n    try-9-exn-ref))"
+        );
+    }
+
+    #[test]
+    fn convert_expr_throw_golden() {
+        let expr = Expr::Throw(0, vec![Expr::Const("42".into())]);
+        assert_eq!(convert_expr(&expr, 0), "(wasm-throw-exception 0 42)");
+    }
+}

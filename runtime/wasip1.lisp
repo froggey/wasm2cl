@@ -505,6 +505,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
 (defun |path_open| (context dir-fd lookup-flags path-buf path-len oflags fs-rights-base fs-rights-inheriting fdflags out-ptr)
   (declare (ignore fs-rights-inheriting))
   (let ((full-path (resolve-path context dir-fd lookup-flags path-buf path-len)))
+    (format t "Open ~A~%" full-path)
     (unless full-path
       (return-from |path_open| +err-badf+))
     (when (logtest oflags +oflags-directory+)

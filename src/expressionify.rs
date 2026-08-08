@@ -192,7 +192,9 @@ pub fn expressionify_function_body(
                                 .collect();
                             let body = if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
                                 if !ty.params.is_empty() {
-                                    bail!("try_table catch delivering a value into a loop unsupported");
+                                    bail!(
+                                        "try_table catch delivering a value into a loop unsupported"
+                                    );
                                 }
                                 Expr::Go(block_stack[target_idx].name.clone())
                             } else if ty.params.is_empty() {
@@ -227,10 +229,14 @@ pub fn expressionify_function_body(
                             let target_idx = block_stack.len() - 1 - (label as usize);
                             let ty = &module.tags[tag as usize];
                             if ty.params.len() > 1 {
-                                bail!("try_table catch_ref payload with multiple values unsupported");
+                                bail!(
+                                    "try_table catch_ref payload with multiple values unsupported"
+                                );
                             }
                             if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
-                                bail!("try_table catch_ref delivering a value into a loop unsupported");
+                                bail!(
+                                    "try_table catch_ref delivering a value into a loop unsupported"
+                                );
                             }
                             let vars: Vec<String> = (0..ty.params.len())
                                 .map(|i| format!("{name}-exn-{i}"))
@@ -258,7 +264,9 @@ pub fn expressionify_function_body(
                         wasmparser::Catch::AllRef { label } => {
                             let target_idx = block_stack.len() - 1 - (label as usize);
                             if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
-                                bail!("try_table catch_all_ref delivering a value into a loop unsupported");
+                                bail!(
+                                    "try_table catch_all_ref delivering a value into a loop unsupported"
+                                );
                             }
                             let ref_var = format!("{name}-exn-ref");
                             block_stack[target_idx].targeted = true;
@@ -737,7 +745,10 @@ pub fn expressionify_function_body(
                     });
                 }
                 let default_target = block_stack.len() - 1 - (targets.default() as usize);
-                if !matches!(block_stack[default_target].blockty, wasmparser::BlockType::Empty) {
+                if !matches!(
+                    block_stack[default_target].blockty,
+                    wasmparser::BlockType::Empty
+                ) {
                     bail!("br_table default target with a value-typed block unsupported");
                 }
                 block_stack[default_target].targeted = true;
@@ -1168,4 +1179,537 @@ pub fn expressionify_function_body(
     }
 
     Ok(exprs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::module::FuncType;
+
+    fn module_with(types: Vec<FuncType>, tags: Vec<FuncType>, functions: Vec<Function>) -> Module {
+        Module {
+            memory_initial_size: 0,
+            table_initial_size: 0,
+            types,
+            tags,
+            functions,
+            exports: vec![],
+            active_data: vec![],
+            active_elements: vec![],
+            globals: vec![],
+            start_fn: None,
+        }
+    }
+
+    fn function(index: usize, ty: FuncType) -> Function {
+        Function {
+            index,
+            ty,
+            name: None,
+            body: None,
+            internal_name: None,
+        }
+    }
+
+    fn locals(names: &[(&str, Type)]) -> Vec<(String, Type)> {
+        names.iter().map(|(n, t)| (n.to_string(), *t)).collect()
+    }
+
+    fn run(
+        module: &Module,
+        func: &Function,
+        all_locals: &[(String, Type)],
+        code: &[u8],
+    ) -> Result<Vec<Expr>> {
+        let mut ops = wasmparser::OperatorsReader::new(wasmparser::BinaryReader::new(code, 0));
+        expressionify_function_body(module, func, all_locals, &mut ops)
+    }
+
+    fn err_message(result: Result<Vec<Expr>>) -> String {
+        result.unwrap_err().to_string()
+    }
+
+    #[test]
+    fn single_expr_wraps_sequences() {
+        assert!(matches!(
+            single_expr(vec![Expr::Const("1".into())]),
+            Expr::Const(_)
+        ));
+        assert!(matches!(single_expr(vec![]), Expr::Progn(ref e) if e.is_empty()));
+        assert!(matches!(
+            single_expr(vec![Expr::Const("1".into()), Expr::Const("2".into())]),
+            Expr::Progn(ref e) if e.len() == 2
+        ));
+    }
+
+    #[test]
+    fn append_side_effect_pushes_to_empty_exprs() {
+        let mut exprs = vec![];
+        let mut stack = vec![];
+        append_side_effect(&mut exprs, &mut stack, Expr::Const("1".into()));
+        assert_eq!(format!("{exprs:?}"), "[Const(\"1\")]");
+        assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn append_side_effect_wraps_value_in_prog1() {
+        let mut exprs = vec![];
+        let mut stack = vec![Expr::Const("1".into())];
+        append_side_effect(&mut exprs, &mut stack, Expr::Const("2".into()));
+        assert!(exprs.is_empty());
+        assert_eq!(
+            format!("{stack:?}"),
+            "[Prog1(Const(\"1\"), [Const(\"2\")])]"
+        );
+    }
+
+    #[test]
+    fn append_side_effect_appends_to_existing_prog1() {
+        let mut exprs = vec![];
+        let mut stack = vec![Expr::Prog1(Box::new(Expr::Const("1".into())), vec![])];
+        append_side_effect(&mut exprs, &mut stack, Expr::Const("2".into()));
+        assert!(exprs.is_empty());
+        assert_eq!(
+            format!("{stack:?}"),
+            "[Prog1(Const(\"1\"), [Const(\"2\")])]"
+        );
+    }
+
+    #[test]
+    fn prim_op1_pops_single_operand() {
+        let mut stack = vec![Expr::Const("5".into())];
+        prim_op1(Primitive::I32Eqz, &mut stack);
+        assert_eq!(format!("{stack:?}"), "[Prim(I32Eqz, [Const(\"5\")])]");
+    }
+
+    #[test]
+    fn prim_op2_keeps_lhs_rhs_order() {
+        // lhs pushed first, rhs popped first
+        let mut stack = vec![Expr::Local("x".into()), Expr::Const("3".into())];
+        prim_op2(Primitive::I32Add, &mut stack);
+        assert_eq!(
+            format!("{stack:?}"),
+            "[Prim(I32Add, [Local(\"x\"), Const(\"3\")])]"
+        );
+    }
+
+    #[test]
+    fn block_result_count_uses_type_section() {
+        let module = module_with(
+            vec![FuncType {
+                params: vec![],
+                results: vec![Type::I32, Type::ExnRef],
+            }],
+            vec![],
+            vec![],
+        );
+        use wasmparser::BlockType;
+        assert_eq!(block_result_count(&BlockType::Empty, &module), 0);
+        assert_eq!(
+            block_result_count(&BlockType::Type(wasmparser::ValType::I32), &module),
+            1
+        );
+        assert_eq!(block_result_count(&BlockType::FuncType(0), &module), 2);
+    }
+
+    #[test]
+    fn expressionify_i32_const() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        let exprs = run(&module, &func, &[], &[0x41, 0x2a, 0x0b]).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Const(\"42\")]");
+    }
+
+    #[test]
+    fn expressionify_local_get_and_add() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        let l = locals(&[("param-0", Type::I32)]);
+        let exprs = run(&module, &func, &l, &[0x20, 0x00, 0x41, 0x02, 0x6a, 0x0b]).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Prim(I32Add, [Local(\"param-0\"), Const(\"2\")])]"
+        );
+    }
+
+    #[test]
+    fn expressionify_block_br() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        let exprs = run(&module, &func, &[], &[0x02, 0x40, 0x0c, 0x00, 0x0b, 0x0b]).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Block(\"block-0\", Progn([ReturnFrom(\"block-0\", Progn([]))]))]"
+        );
+    }
+
+    #[test]
+    fn expressionify_if_else() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // i32.const 1; if (i32); i32.const 10; else; i32.const 20; end; end
+        let exprs = run(
+            &module,
+            &func,
+            &[],
+            &[
+                0x41, 0x01, 0x04, 0x7f, 0x41, 0x0a, 0x05, 0x41, 0x14, 0x0b, 0x0b,
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[If(Const(\"1\"), Const(\"10\"), Const(\"20\"))]"
+        );
+    }
+
+    #[test]
+    fn expressionify_loop_br_if() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // block; loop; i32.const 1; br_if 0; end; end; end
+        let exprs = run(
+            &module,
+            &func,
+            &[],
+            &[
+                0x02, 0x40, 0x03, 0x40, 0x41, 0x01, 0x0d, 0x00, 0x0b, 0x0b, 0x0b,
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Progn([Tagbody(\"loop-1\", Progn([If(Const(\"1\"), Go(\"loop-1\"), Progn([]))]))])]"
+        );
+    }
+
+    #[test]
+    fn expressionify_call_uses_function_name() {
+        let module = module_with(
+            vec![],
+            vec![],
+            vec![
+                function(
+                    0,
+                    FuncType {
+                        params: vec![],
+                        results: vec![],
+                    },
+                ),
+                function(
+                    1,
+                    FuncType {
+                        params: vec![Type::I32],
+                        results: vec![Type::I32],
+                    },
+                ),
+            ],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        let l = locals(&[("param-0", Type::I32)]);
+        // local.get 0; call 1; end
+        let exprs = run(&module, &func, &l, &[0x20, 0x00, 0x10, 0x01, 0x0b]).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Call(\"wasm-function-1\", [Local(\"param-0\")])]"
+        );
+    }
+
+    fn landing_pad_code() -> Vec<u8> {
+        // block (func 0); try_table catch_ref 0 0; i32.const 42; throw 0; end;
+        // unreachable; end; local.set 4; local.set 3; end
+        vec![
+            0x02, 0x00, 0x1f, 0x40, 0x01, 0x01, 0x00, 0x00, 0x41, 0x2a, 0x08, 0x00, 0x0b, 0x00,
+            0x0b, 0x21, 0x04, 0x21, 0x03, 0x0b,
+        ]
+    }
+
+    #[test]
+    fn expressionify_try_table_catch_ref_landing_pad() {
+        let module = module_with(
+            vec![FuncType {
+                params: vec![],
+                results: vec![Type::I32, Type::ExnRef],
+            }],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        let l = locals(&[
+            ("local-0", Type::I32),
+            ("local-1", Type::I32),
+            ("local-2", Type::I32),
+            ("local-3", Type::I32),
+            ("local-4", Type::ExnRef),
+        ]);
+        let exprs = run(&module, &func, &l, &landing_pad_code()).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[SetfValues { locals: [\"local-3\", \"local-4\"], value: \
+             Block(\"block-0\", Progn([Try { name: \"try-1\", body: Throw(0, [Const(\"42\")]), \
+             handlers: [CatchHandler { tag: Some(0), vars: [\"try-1-exn-0\"], \
+             exnref_var: Some(\"try-1-exn-ref\"), body: \
+             Values([Local(\"try-1-exn-0\"), Local(\"try-1-exn-ref\")]) }] }])) }]"
+        );
+    }
+
+    #[test]
+    fn expressionify_try_table_catch_single_value() {
+        let module = module_with(
+            vec![FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            }],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        let l = locals(&[
+            ("local-0", Type::I32),
+            ("local-1", Type::I32),
+            ("local-2", Type::I32),
+            ("local-3", Type::I32),
+        ]);
+        // block (func 0); try_table catch 0 0; i32.const 42; throw 0; end;
+        // unreachable; end; local.set 3; end
+        let code = vec![
+            0x02, 0x00, 0x1f, 0x40, 0x01, 0x00, 0x00, 0x00, 0x41, 0x2a, 0x08, 0x00, 0x0b, 0x00,
+            0x0b, 0x21, 0x03, 0x0b,
+        ];
+        let exprs = run(&module, &func, &l, &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Setf(\"local-3\", Block(\"block-0\", Progn([Try { name: \"try-1\", \
+             body: Throw(0, [Const(\"42\")]), handlers: [CatchHandler { tag: Some(0), \
+             vars: [\"try-1-exn-0\"], exnref_var: None, body: Local(\"try-1-exn-0\") }] }])))]"
+        );
+    }
+
+    #[test]
+    fn expressionify_try_table_catch_all_ref() {
+        let module = module_with(
+            vec![FuncType {
+                params: vec![],
+                results: vec![Type::ExnRef],
+            }],
+            vec![],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        let l = locals(&[
+            ("local-0", Type::I32),
+            ("local-1", Type::I32),
+            ("local-2", Type::I32),
+            ("local-3", Type::I32),
+            ("local-4", Type::ExnRef),
+        ]);
+        // block (func 0); try_table catch_all_ref 0; i32.const 0; drop; end;
+        // unreachable; end; local.set 4; end
+        let code = vec![
+            0x02, 0x00, 0x1f, 0x40, 0x01, 0x03, 0x00, 0x41, 0x00, 0x1a, 0x0b, 0x00, 0x0b, 0x21,
+            0x04, 0x0b,
+        ];
+        let exprs = run(&module, &func, &l, &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Setf(\"local-4\", Block(\"block-0\", Progn([Try { name: \"try-1\", \
+             body: Const(\"0\"), handlers: [CatchHandler { tag: None, vars: [], \
+             exnref_var: Some(\"try-1-exn-ref\"), body: Local(\"try-1-exn-ref\") }] }, \
+             Prim(Unreachable, [])])))]"
+        );
+    }
+
+    #[test]
+    fn expressionify_throw_ref() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        let l = locals(&[("param-0", Type::ExnRef)]);
+        // local.get 0; throw_ref; end
+        let exprs = run(&module, &func, &l, &[0x20, 0x00, 0x0a, 0x0b]).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[ThrowRef(Local(\"param-0\"))]");
+    }
+
+    #[test]
+    fn expressionify_throw_uses_tag_index() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // i32.const 42; throw 0; end
+        let exprs = run(&module, &func, &[], &[0x41, 0x2a, 0x08, 0x00, 0x0b]).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Throw(0, [Const(\"42\")])]");
+    }
+
+    #[test]
+    fn rethrow_without_try_bails() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // block; rethrow 0; end; end
+        let code = [0x02, 0x40, 0x09, 0x00, 0x0b, 0x0b];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(
+            err.contains("`rethrow` depth does not target a `try` block"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn multi_value_end_requires_local_set() {
+        let module = module_with(
+            vec![FuncType {
+                params: vec![],
+                results: vec![Type::I32, Type::ExnRef],
+            }],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // Same as the landing pad but the block result is consumed by a `drop`.
+        let mut code = landing_pad_code();
+        code[15] = 0x1a; // local.set 4 -> drop
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(
+            err.contains(
+                "multi-value block results must be consumed by consecutive local.set, got Drop"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn try_table_catch_into_loop_bails() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // loop; try_table catch 0 0; i32.const 42; throw 0; end; end; end
+        let code = [
+            0x03, 0x40, 0x1f, 0x40, 0x01, 0x00, 0x00, 0x00, 0x41, 0x2a, 0x08, 0x00, 0x0b, 0x0b,
+            0x0b,
+        ];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(
+            err.contains("try_table catch delivering a value into a loop unsupported"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unsupported_operator_bails() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // ref.null func; end
+        let code = [0xd0, 0x00, 0x0b];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(err.contains("unsupported operator"), "{err}");
+    }
 }

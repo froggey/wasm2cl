@@ -428,3 +428,142 @@ pub fn parse(bytes: &[u8]) -> Result<Module> {
         start_fn,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasmparser::{RefType, ValType};
+
+    #[test]
+    fn parse_type_maps_all_supported_valtypes() {
+        assert_eq!(parse_type(&ValType::I32).unwrap(), Type::I32);
+        assert_eq!(parse_type(&ValType::I64).unwrap(), Type::I64);
+        assert_eq!(parse_type(&ValType::F32).unwrap(), Type::F32);
+        assert_eq!(parse_type(&ValType::F64).unwrap(), Type::F64);
+        assert_eq!(parse_type(&ValType::V128).unwrap(), Type::V128);
+        assert_eq!(parse_type(&ValType::FUNCREF).unwrap(), Type::FuncRef);
+        assert_eq!(parse_type(&ValType::EXTERNREF).unwrap(), Type::ExternRef);
+        assert_eq!(parse_type(&ValType::EXNREF).unwrap(), Type::ExnRef);
+    }
+
+    #[test]
+    fn parse_type_rejects_unsupported_valtypes() {
+        // `(ref noexn)` is the "no exception" ref type; only exn refs
+        // are meaningful to us.
+        let err = parse_type(&ValType::Ref(RefType::NOEXN)).unwrap_err();
+        assert!(err.to_string().contains("unsupported valtype"), "{err}");
+    }
+
+    #[test]
+    fn is_exn_ref_detects_exn_heap_types() {
+        assert!(is_exn_ref(&RefType::EXNREF));
+        assert!(is_exn_ref(&RefType::EXN));
+        assert!(!is_exn_ref(&RefType::NOEXN));
+        assert!(!is_exn_ref(&RefType::FUNCREF));
+        assert!(!is_exn_ref(&RefType::EXTERNREF));
+    }
+
+    fn function(
+        index: usize,
+        name: Option<(String, String)>,
+        internal_name: Option<String>,
+    ) -> Function {
+        Function {
+            index,
+            ty: FuncType {
+                params: vec![],
+                results: vec![],
+            },
+            name,
+            body: None,
+            internal_name,
+        }
+    }
+
+    #[test]
+    fn function_name_prefers_internal_name() {
+        // The name section wins over import/export names.
+        let f = function(
+            7,
+            Some(("env".into(), "proc_exit".into())),
+            Some("foo".into()),
+        );
+        assert_eq!(f.name(), "wasm-7-|foo|");
+    }
+
+    #[test]
+    fn function_name_import() {
+        let f = function(
+            3,
+            Some(("wasi_snapshot_preview1".into(), "proc_exit".into())),
+            None,
+        );
+        assert_eq!(
+            f.name(),
+            "wasm-import-|wasi_snapshot_preview1|-|proc_exit|-3"
+        );
+    }
+
+    #[test]
+    fn function_name_fallback() {
+        let f = function(5, None, None);
+        assert_eq!(f.name(), "wasm-function-5");
+    }
+
+    #[test]
+    fn parse_empty_module() {
+        let module = parse(&[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]).unwrap();
+        assert_eq!(module.types.len(), 0);
+        assert_eq!(module.functions.len(), 0);
+        assert_eq!(module.exports.len(), 0);
+        assert_eq!(module.start_fn, None);
+    }
+
+    #[test]
+    fn parse_parses_all_supported_sections() {
+        let bytes = wat::parse_str(
+            r#"
+            (module
+              (type $t0 (func (param i32) (result i32)))
+              (type $t1 (func (param i32)))
+              (type $t2 (func))
+              (import "env" "log" (func $log (type $t1)))
+              (func $f (type $t0) (param i32) (result i32)
+                local.get 0)
+              (func $main (type $t2)
+                (call $log (call $f (i32.const 1))))
+              (memory 1)
+              (global $g (mut i32) (i32.const 3))
+              (export "main" (func $main))
+              (data (i32.const 8) "hello")
+              (start $main)
+            )
+            "#,
+        )
+        .unwrap();
+        let module = parse(&bytes).unwrap();
+
+        assert_eq!(module.types.len(), 3);
+        assert_eq!(module.functions.len(), 3);
+        assert_eq!(module.tags.len(), 0);
+        assert_eq!(module.memory_initial_size, 64 * 1024);
+        assert_eq!(module.globals.len(), 1);
+        assert_eq!(module.active_data.len(), 1);
+        assert_eq!(module.active_data[0].address, 8);
+        assert_eq!(module.active_data[0].data, b"hello");
+        assert_eq!(module.start_fn, Some(2));
+        // Only function exports are recorded.
+        assert_eq!(module.exports.len(), 1);
+        assert_eq!(module.exports[0].name, "main");
+        assert_eq!(module.exports[0].func_idx, 2);
+
+        // The import gets (module, name); defined funcs get bodies.
+        assert_eq!(
+            module.functions[0].name,
+            Some(("env".to_string(), "log".to_string()))
+        );
+        assert!(module.functions[0].body.is_none());
+        assert!(module.functions[1].body.is_some());
+        assert!(module.functions[2].body.is_some());
+    }
+}
