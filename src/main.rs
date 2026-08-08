@@ -685,6 +685,7 @@ enum BlockKind {
     If,
     Loop,
     Try,
+    TryTable,
 }
 
 #[derive(Debug)]
@@ -768,6 +769,9 @@ fn expressionify_function_body(
             Try { .. } if unreachable => {
                 unreachable_depth += 1;
             }
+            TryTable { .. } if unreachable => {
+                unreachable_depth += 1;
+            }
             Else if unreachable && unreachable_depth != 0 => {}
             Catch { .. } if unreachable && unreachable_depth != 0 => {}
             CatchAll if unreachable && unreachable_depth != 0 => {}
@@ -834,6 +838,77 @@ fn expressionify_function_body(
                     current_handler: None,
                 });
             }
+            TryTable { try_table } => {
+                // Each catch clause branches to an outer label (resolved before
+                // this try_table's own frame is pushed), delivering the payload
+                // as that label's value. The payload becomes the catch clause's
+                // body, so `wasm-try` evaluates to it on the catch path.
+                let name = format!("try-{pc}");
+                let mut handlers = Vec::new();
+                for catch in try_table.catches {
+                    let handler = match catch {
+                        wasmparser::Catch::One { tag, label } => {
+                            let target_idx = block_stack.len() - 1 - (label as usize);
+                            let ty = &module.tags[tag as usize];
+                            assert!(
+                                ty.params.len() <= 1,
+                                "try_table catch payload with multiple values unsupported"
+                            );
+                            let vars: Vec<String> = (0..ty.params.len())
+                                .map(|i| format!("{name}-exn-{i}"))
+                                .collect();
+                            let body =
+                                if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
+                                    assert!(
+                                        ty.params.is_empty(),
+                                        "try_table catch delivering a value into a loop unsupported"
+                                    );
+                                    Expr::Go(block_stack[target_idx].name.clone())
+                                } else if ty.params.is_empty() {
+                                    Expr::Progn(vec![])
+                                } else {
+                                    Expr::Local(vars[0].clone())
+                                };
+                            block_stack[target_idx].targeted = true;
+                            CatchHandler {
+                                tag: Some(tag),
+                                vars,
+                                body: Box::new(body),
+                            }
+                        }
+                        wasmparser::Catch::All { label } => {
+                            let target_idx = block_stack.len() - 1 - (label as usize);
+                            let body = if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
+                                Expr::Go(block_stack[target_idx].name.clone())
+                            } else {
+                                Expr::Progn(vec![])
+                            };
+                            block_stack[target_idx].targeted = true;
+                            CatchHandler {
+                                tag: None,
+                                vars: vec![],
+                                body: Box::new(body),
+                            }
+                        }
+                        wasmparser::Catch::OneRef { .. } | wasmparser::Catch::AllRef { .. } => {
+                            unimplemented!("try_table catch_ref / catch_all_ref (exnref)")
+                        }
+                    };
+                    handlers.push(handler);
+                }
+                block_stack.push(ActiveBlock {
+                    kind: BlockKind::TryTable,
+                    blockty: try_table.ty,
+                    old_exprs: std::mem::take(&mut exprs),
+                    then: None,
+                    name,
+                    targeted: false,
+                    stack: std::mem::take(&mut stack),
+                    handlers,
+                    try_body: None,
+                    current_handler: None,
+                });
+            }
             Else => {
                 let was_unreachable = unreachable;
                 unreachable = false;
@@ -864,6 +939,7 @@ fn expressionify_function_body(
                 let becomes_reachable = match entry.kind {
                     BlockKind::Loop => false,
                     BlockKind::Try => was_unreachable && (entry.targeted || entry.try_body.is_some()),
+                    BlockKind::TryTable => was_unreachable && entry.targeted,
                     _ => was_unreachable && entry.targeted,
                 };
 
@@ -922,6 +998,15 @@ fn expressionify_function_body(
                             name: entry.name.clone(),
                             body: Box::new(single_expr(try_body)),
                             handlers,
+                        }
+                    }
+                    BlockKind::TryTable => {
+                        let try_body = std::mem::take(&mut exprs);
+                        exprs = entry.old_exprs;
+                        Expr::Try {
+                            name: entry.name.clone(),
+                            body: Box::new(single_expr(try_body)),
+                            handlers: entry.handlers,
                         }
                     }
                 };
