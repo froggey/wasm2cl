@@ -645,7 +645,7 @@
 (defun f64reinterpreti64 (value)
   (let ((tmp (make-array 8 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
-    (setf (nibbles:ub64ref/le tmp 0) (the f64 value))
+    (setf (nibbles:ub64ref/le tmp 0) value)
     (nibbles:ieee-double-ref/le tmp 0)))
 
 (defun f64promotef32 (x)
