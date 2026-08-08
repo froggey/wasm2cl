@@ -589,7 +589,10 @@
 (define-float-binop f32div f32 /)
 (define-float-binop f32min f32 min)
 (define-float-binop f32max f32 max)
-;; F32Copysign
+(defun f32copysign (x y)
+  ;; TODO: Check for NaNs, the spec mandates this should preserve
+  ;; the rest of the NaN, effectively making this a bit-twiddling op.
+  (float-sign (the f32 y) (the f32 x)))
 (define-float-unop f32abs f32 abs)
 (define-float-unop f32neg f32 (lambda (x) (- x)))
 (define-float-unop f32sqrt f32 sqrt)
@@ -637,7 +640,10 @@
 (define-float-binop f64div f64 /)
 (define-float-binop f64min f64 min)
 (define-float-binop f64max f64 max)
-;; F64Copysign
+(defun f64copysign (x y)
+  ;; TODO: Check for NaNs, the spec mandates this should preserve
+  ;; the rest of the NaN, effectively making this a bit-twiddling op.
+  (float-sign (the f64 y) (the f64 x)))
 (define-float-unop f64abs f64 abs)
 (define-float-unop f64neg f64 (lambda (x) (- x)))
 (define-float-unop f64sqrt f64 sqrt)
