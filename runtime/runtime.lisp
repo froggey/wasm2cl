@@ -16,7 +16,8 @@
            #:unreachable
            #:memory-copy #:memory-fill #:memory-grow #:memory-size
            #:wasm-exception #:wasm-exception-tag #:wasm-exception-payload
-           #:wasm-throw-exception #:wasm-try #:wasm-catch #:wasm-catch-all
+           #:wasm-throw-exception #:wasm-try
+           #:wasm-catch #:wasm-catch-ref #:wasm-catch-all #:wasm-catch-all-ref
            #:i32load #:i32store
            #:i32load8u #:i32load8s #:i32store8
            #:i32load16u #:i32load16s #:i32store16
@@ -680,18 +681,27 @@
   (error 'wasm-exception :tag tag :payload payload))
 
 (defun expand-try-clause (exn clauses)
-  (let ((handled (loop for clause in clauses
-                       for (kind tag vars . body) = clause
-                       collect (case kind
+  (let ((handled (loop for (kind . args) in clauses
+                       collect (ecase kind
                                  (wasm-catch
-                                  `((eql (wasm-exception-tag ,exn) ,tag)
-                                    (destructuring-bind ,vars (wasm-exception-payload ,exn)
-                                      (declare (ignorable ,@vars))
-                                      ,@body)))
+                                  (destructuring-bind (tag vars &rest body) args
+                                    `((eql (wasm-exception-tag ,exn) ,tag)
+                                      (destructuring-bind ,vars (wasm-exception-payload ,exn)
+                                        (declare (ignorable ,@vars))
+                                        ,@body))))
+                                 (wasm-catch-ref
+                                  (destructuring-bind (tag payload-vars ref-var &rest body) args
+                                    `((eql (wasm-exception-tag ,exn) ,tag)
+                                      (let ((,ref-var ,exn))
+                                        (destructuring-bind ,payload-vars
+                                            (wasm-exception-payload ,exn)
+                                          (declare (ignorable ,@payload-vars ,ref-var))
+                                          ,@body)))))
                                  (wasm-catch-all
-                                  `(t ,@(cdr clause)))
-                                 (otherwise
-                                  (error "Unknown wasm-try clause ~S" clause))))))
+                                  `(t ,@args))
+                                 (wasm-catch-all-ref
+                                  (destructuring-bind (ref-var &rest body) args
+                                    `(t (let ((,ref-var ,exn)) ,@body))))))))
     (if (and handled (eq (caar (last handled)) 't))
         handled
         (append handled

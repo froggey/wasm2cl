@@ -19,6 +19,7 @@ enum Type {
     V128,
     FuncRef,
     ExternRef,
+    ExnRef,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,16 @@ struct Module {
     start_fn: Option<usize>,
 }
 
+fn is_exn_ref(r: &wasmparser::RefType) -> bool {
+    matches!(
+        r.heap_type(),
+        wasmparser::HeapType::Abstract {
+            shared: false,
+            ty: wasmparser::AbstractHeapType::Exn
+        }
+    )
+}
+
 fn parse_type(ty: &wasmparser::ValType) -> Result<Type> {
     Ok(match ty {
         wasmparser::ValType::I32 => Type::I32,
@@ -89,6 +100,7 @@ fn parse_type(ty: &wasmparser::ValType) -> Result<Type> {
         wasmparser::ValType::V128 => Type::V128,
         wasmparser::ValType::Ref(r) if r.is_func_ref() => Type::FuncRef,
         wasmparser::ValType::Ref(r) if r.is_extern_ref() => Type::ExternRef,
+        wasmparser::ValType::Ref(r) if is_exn_ref(r) => Type::ExnRef,
         other => bail!("unsupported valtype: {other:?}"),
     })
 }
@@ -408,6 +420,7 @@ fn convert_type(t: Type) -> &'static str {
         Type::V128 => "v128",
         Type::FuncRef => "func-ref",
         Type::ExternRef => "extern-ref",
+        Type::ExnRef => "exnref",
     }
 }
 
@@ -420,6 +433,7 @@ fn initializer_for_type(t: Type) -> &'static str {
         Type::V128 => "0",
         Type::FuncRef => "nil",
         Type::ExternRef => "nil",
+        Type::ExnRef => "nil",
     }
 }
 
@@ -628,12 +642,19 @@ enum Expr {
     },
     Throw(usize, Vec<Expr>),
     Rethrow(String),
+    ThrowRef(Box<Expr>),
+    Values(Vec<Expr>),
+    SetfValues {
+        locals: Vec<String>,
+        value: Box<Expr>,
+    },
 }
 
 #[derive(Debug)]
 struct CatchHandler {
     tag: Option<u32>,
     vars: Vec<String>,
+    exnref_var: Option<String>,
     body: Box<Expr>,
 }
 
@@ -707,6 +728,14 @@ fn single_expr(mut exprs: Vec<Expr>) -> Expr {
         exprs.pop().unwrap()
     } else {
         Expr::Progn(exprs)
+    }
+}
+
+fn block_result_count(blockty: &wasmparser::BlockType, module: &Module) -> usize {
+    match blockty {
+        wasmparser::BlockType::Empty => 0,
+        wasmparser::BlockType::Type(_) => 1,
+        wasmparser::BlockType::FuncType(idx) => module.types[*idx as usize].results.len(),
     }
 }
 
@@ -873,6 +902,7 @@ fn expressionify_function_body(
                             CatchHandler {
                                 tag: Some(tag),
                                 vars,
+                                exnref_var: None,
                                 body: Box::new(body),
                             }
                         }
@@ -887,11 +917,58 @@ fn expressionify_function_body(
                             CatchHandler {
                                 tag: None,
                                 vars: vec![],
+                                exnref_var: None,
                                 body: Box::new(body),
                             }
                         }
-                        wasmparser::Catch::OneRef { .. } | wasmparser::Catch::AllRef { .. } => {
-                            unimplemented!("try_table catch_ref / catch_all_ref (exnref)")
+                        wasmparser::Catch::OneRef { tag, label } => {
+                            let target_idx = block_stack.len() - 1 - (label as usize);
+                            let ty = &module.tags[tag as usize];
+                            assert!(
+                                ty.params.len() <= 1,
+                                "try_table catch_ref payload with multiple values unsupported"
+                            );
+                            assert!(
+                                !matches!(block_stack[target_idx].kind, BlockKind::Loop),
+                                "try_table catch_ref delivering a value into a loop unsupported"
+                            );
+                            let vars: Vec<String> = (0..ty.params.len())
+                                .map(|i| format!("{name}-exn-{i}"))
+                                .collect();
+                            let ref_var = format!("{name}-exn-ref");
+                            // Per spec, catch_ref pushes the payload values then
+                            // the exnref (last) onto the target label, so the
+                            // handler body produces (payload..., exnref).
+                            let mut body_values: Vec<Expr> =
+                                vars.iter().map(|v| Expr::Local(v.clone())).collect();
+                            body_values.push(Expr::Local(ref_var.clone()));
+                            let body = if body_values.len() == 1 {
+                                body_values.pop().unwrap()
+                            } else {
+                                Expr::Values(body_values)
+                            };
+                            block_stack[target_idx].targeted = true;
+                            CatchHandler {
+                                tag: Some(tag),
+                                vars,
+                                exnref_var: Some(ref_var),
+                                body: Box::new(body),
+                            }
+                        }
+                        wasmparser::Catch::AllRef { label } => {
+                            let target_idx = block_stack.len() - 1 - (label as usize);
+                            assert!(
+                                !matches!(block_stack[target_idx].kind, BlockKind::Loop),
+                                "try_table catch_all_ref delivering a value into a loop unsupported"
+                            );
+                            let ref_var = format!("{name}-exn-ref");
+                            block_stack[target_idx].targeted = true;
+                            CatchHandler {
+                                tag: None,
+                                vars: vec![],
+                                exnref_var: Some(ref_var.clone()),
+                                body: Box::new(Expr::Local(ref_var)),
+                            }
                         }
                     };
                     handlers.push(handler);
@@ -986,6 +1063,7 @@ fn expressionify_function_body(
                             handlers.push(CatchHandler {
                                 tag,
                                 vars,
+                                exnref_var: None,
                                 body: Box::new(single_expr(std::mem::replace(
                                     &mut exprs,
                                     entry.old_exprs,
@@ -1017,7 +1095,40 @@ fn expressionify_function_body(
                         final_expr = Expr::Block(entry.name, Box::new(final_expr));
                     }
                 }
-                if unreachable || matches!(entry.blockty, wasmparser::BlockType::Empty) {
+                let n_results = block_result_count(&entry.blockty, module);
+                if n_results > 1 {
+                    // Narrow multi-value: the block's results must be consumed by
+                    // n_results immediate consecutive `local.set` ops (the shape
+                    // clang emits for catch_ref landing pads). Wasm pops results
+                    // off the block stack top-first (the exnref that was pushed
+                    // last), while `(setf (values ...))` assigns first-value-first,
+                    // so the locals are collected in stream order then reversed.
+                    assert!(
+                        !unreachable,
+                        "multi-value block result in unreachable code unsupported"
+                    );
+                    let mut locals = Vec::with_capacity(n_results);
+                    for _ in 0..n_results {
+                        let op = ops.read()?;
+                        match op {
+                            wasmparser::Operator::LocalSet { local_index } => {
+                                locals.push(all_locals[local_index as usize].0.clone());
+                            }
+                            _ => unimplemented!(
+                                "multi-value block results must be consumed by consecutive local.set"
+                            ),
+                        }
+                    }
+                    locals.reverse();
+                    append_side_effect(
+                        &mut exprs,
+                        &mut stack,
+                        Expr::SetfValues {
+                            locals,
+                            value: Box::new(final_expr),
+                        },
+                    );
+                } else if unreachable || n_results == 0 {
                     append_side_effect(&mut exprs, &mut stack, final_expr);
                 } else {
                     stack.push(final_expr);
@@ -1041,6 +1152,7 @@ fn expressionify_function_body(
                     entry.handlers.push(CatchHandler {
                         tag,
                         vars,
+                        exnref_var: None,
                         body: Box::new(single_expr(std::mem::take(&mut exprs))),
                     });
                 }
@@ -1072,6 +1184,7 @@ fn expressionify_function_body(
                     entry.handlers.push(CatchHandler {
                         tag,
                         vars,
+                        exnref_var: None,
                         body: Box::new(single_expr(std::mem::take(&mut exprs))),
                     });
                 }
@@ -1116,6 +1229,11 @@ fn expressionify_function_body(
                 assert!(matches!(block_stack[target].kind, BlockKind::Try));
                 let exn_var = format!("{}-exn", block_stack[target].name);
                 append_side_effect(&mut exprs, &mut stack, Expr::Rethrow(exn_var));
+                unreachable = true;
+            }
+            ThrowRef => {
+                let exnref = stack.pop().unwrap();
+                append_side_effect(&mut exprs, &mut stack, Expr::ThrowRef(Box::new(exnref)));
                 unreachable = true;
             }
             I32Const { value } => {
@@ -2069,12 +2187,23 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
                 result.push('\n');
                 result.push_str(&make_indent(indent + 2));
                 if let Some(tag) = h.tag {
-                    result.push_str(&format!("(wasm-catch {tag} ({})\n", h.vars.join(" ")));
+                    if let Some(ref_var) = h.exnref_var.as_ref() {
+                        result.push_str(&format!(
+                            "(wasm-catch-ref {tag} ({}) {ref_var}\n",
+                            h.vars.join(" ")
+                        ));
+                    } else {
+                        result.push_str(&format!("(wasm-catch {tag} ({})\n", h.vars.join(" ")));
+                    }
                     result.push_str(&make_indent(indent + 4));
                     result.push_str(&convert_expr(&h.body, indent + 4));
                     result.push(')');
                 } else {
-                    result.push_str("(wasm-catch-all\n");
+                    if let Some(ref_var) = h.exnref_var.as_ref() {
+                        result.push_str(&format!("(wasm-catch-all-ref {ref_var}\n"));
+                    } else {
+                        result.push_str("(wasm-catch-all\n");
+                    }
                     result.push_str(&make_indent(indent + 4));
                     result.push_str(&convert_expr(&h.body, indent + 4));
                     result.push(')');
@@ -2102,6 +2231,27 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             "(error 'wasm-exception :tag (wasm-exception-tag {exn_var}) \
              :payload (wasm-exception-payload {exn_var}))"
         ),
+        ThrowRef(exnref) => format!("(error {})", convert_expr(exnref, indent + 2)),
+        Values(exprs) => {
+            let mut result = String::new();
+            result.push_str("(values");
+            for e in exprs {
+                result.push(' ');
+                result.push_str(&convert_expr(e, indent + 8));
+            }
+            result.push(')');
+            result
+        }
+        SetfValues { locals, value } => {
+            let mut result = String::new();
+            result.push_str("(setf (values ");
+            result.push_str(&locals.join(" "));
+            result.push_str(")\n");
+            result.push_str(&make_indent(indent + 2));
+            result.push_str(&convert_expr(value, indent + 2));
+            result.push(')');
+            result
+        }
     }
 }
 
