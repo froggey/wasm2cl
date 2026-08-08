@@ -15,8 +15,11 @@
            #:|path_open|
            #:|path_filestat_get|
            #:|path_create_directory|
+           #:|path_remove_directory|
            #:|path_unlink_file|
-           #:|proc_exit|))
+           #:|proc_exit|
+           #:|clock_time_get|
+           #:|poll_oneoff|))
 
 (in-package :wasm2cl-wasip1)
 
@@ -200,6 +203,10 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
   "The right to invoke `sock_shutdown`.")
 (defconstant +rights-sock-accept+ (ash 1 29)
   "The right to invoke `sock_accept`.")
+
+(defconstant +whence-set+ 0 "Seek relative to start-of-file.")
+(defconstant +whence-cur+ 1 "Seek relative to current position.")
+(defconstant +whence-end+ 2 "Seek relative to end-of-file.")
 
 (defclass output-stream-file () ())
 
@@ -395,7 +402,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
 (defmethod do-write (context (file output-stream-file) iovs)
   (loop with bytes-written = 0
         for (buf . count) in iovs
-        do (let* ((data (subseq (wasm2cl::wasm-context-memory context)
+        do (let* ((data (subseq (wasm-context-memory context)
                                 buf (+ buf count)))
                   (str (map 'string #'code-char data)))
              (write-string str)
@@ -408,9 +415,9 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
         with stream = (slot-value file '%stream)
         for (buf . count) in iovs
         do
-           (write-sequence (wasm2cl::wasm-context-memory context)
-                                       stream
-                                       :start buf :end (+ buf count))
+           (write-sequence (wasm-context-memory context)
+                           stream
+                           :start buf :end (+ buf count))
            (incf bytes-written count)
         finally
            (return bytes-written)))
@@ -435,7 +442,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
         with stream = (slot-value file '%stream)
         for (buf . count) in iovs
         do
-           (let* ((pos (read-sequence (wasm2cl::wasm-context-memory context)
+           (let* ((pos (read-sequence (wasm-context-memory context)
                                       stream
                                       :start buf :end (+ buf count)))
                   (elts (- pos buf)))
@@ -466,10 +473,24 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
           (t
            +err-badf+))))
 
+(defun |fd_seek| (context fd offset whence new-offset)
+  (let ((file (resolve-fd context fd)))
+    (cond (file
+           (unless (or (eql whence +whence-set+)
+                       (and (eql whence +whence-cur+)
+                            (zerop offset)))
+             (error "TODO: Whence ~A" whence))
+           (when (eql whence +whence-set+)
+             (file-position (slot-value file '%stream) offset))
+           (i64store context new-offset (file-position (slot-value file '%stream)))
+           +success+)
+          (t
+           +err-badf+))))
+
 (defun resolve-path (context dir-fd lookup-flags path-buf path-len)
   (declare (ignore lookup-flags))
   (let ((dir (resolve-fd context dir-fd))
-        (path (babel:octets-to-string (wasm2cl::wasm-context-memory context)
+        (path (babel:octets-to-string (wasm-context-memory context)
                                       :start path-buf :end (+ path-buf path-len))))
     (unless (typep dir 'preopened-path)
       ;; FIXME: Better error here.
@@ -494,27 +515,33 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
                         ((logtest fs-rights-base +rights-fd-write+)
                          :output)
                         (t
-                         (error "Unsupported access rights ~X" fs-rights-base))))
+                         (format *error-output*
+                                 "Tried to open file with unsupported access rights ~X. Assuming input.~%" fs-rights-base)
+                         :input)))
            (stream (open full-path
                          :direction direction
                          :element-type '(unsigned-byte 8)
-                         :if-does-not-exist (if (or (eql direction :input)
-                                                    (not (logtest oflags +oflags-creat+)))
-                                                :error
-                                                :create)
+                         :if-does-not-exist (cond ((eql direction :input)
+                                                   nil)
+                                                  ((logtest oflags +oflags-creat+)
+                                                   :create)
+                                                  (t
+                                                   :error))
                          :if-exists (cond ((logtest oflags +oflags-excl+)
                                            :error)
                                           ((logtest oflags +oflags-trunc+)
                                            :supersede)
                                           (t
-                                           :overwrite))))
-           (file (make-instance 'binary-file
-                                :path full-path
-                                :stream stream))
-           (new-fd (vector-push-extend file (slot-value (wasm-context-personality context)
-                                                        '%fd-table))))
-      (i32store context out-ptr new-fd)
-      +success+)))
+                                           :overwrite)))))
+      (unless stream
+        (return-from |path_open| +err-noent+))
+      (let* ((file (make-instance 'binary-file
+                                  :path full-path
+                                  :stream stream))
+             (new-fd (vector-push-extend file (slot-value (wasm-context-personality context)
+                                                          '%fd-table))))
+        (i32store context out-ptr new-fd)
+        +success+))))
 
 (defun |path_filestat_get| (context dir-fd lookup-flags path-buf path-len statbuf)
   (let ((full-path (resolve-path context dir-fd lookup-flags path-buf path-len)))
@@ -545,3 +572,30 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
 (defun |proc_exit| (context code)
   (declare (ignore context))
   (throw 'exit code))
+
+(defun |clock_time_get| (context clockid precision time)
+  (let* ((current-time (/ (get-internal-real-time)
+                          internal-time-units-per-second))
+         (time-ns (truncate (* current-time 1000000000))))
+    (i64store context time (ldb (byte 64 0) time-ns))
+    0))
+
+(defun |poll_oneoff| (context in out count nevents)
+  (declare (ignore out))
+  (cond ((eql count 0)
+         (i32store context nevents 0)
+         +success+)
+        ((eql count 1)
+         (let ((userdata (i64load context in))
+               (tag (i32load8u context (+ in 8)))
+               (id (i32load context (+ in 16)))
+               (timeout (i64load context (+ in 24)))
+               (precision (i64load context (+ in 32)))
+               (flags (i32load16u context (+ in 40))))
+           (declare (ignore userdata id precision flags))
+           (unless (eql tag 0) ; clock
+             (error "unimplemented"))
+           (sleep (/ timeout 1000000000.0))
+           +success+))
+        (t
+         (error "multiple poll events"))))

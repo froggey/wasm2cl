@@ -10,6 +10,7 @@
            #:wasm-context-start-fn
 
            #:sign-extend
+           #:read-c-string
 
            #:context #:global #:call-indirect #:select
            #:unreachable
@@ -192,8 +193,11 @@
 
 (defmacro define-wasm-import (local-name arg-types return-type module name)
   (declare (ignore return-type))
-  (let ((package (or (if (string= module "wasi_snapshot_preview1")
-                          (find-package :wasm2cl-wasip1))
+  ;; TODO: Make this less hard-coded
+  (let ((package (or (cond ((string= module "wasi_snapshot_preview1")
+                            (find-package :wasm2cl-wasip1))
+                           ((string= module "iota_sdl")
+                            (find-package :iota-sdl)))
                      (error "Unknown import module ~S" module))))
     (multiple-value-bind (symbol status)
         (find-symbol (string name) package)
@@ -208,6 +212,15 @@
   (let ((args (loop for nil in arg-types collect (gensym "ARG"))))
     `(defun ,name (context . ,args)
        (,local-name context ,@args))))
+
+(defun read-c-string (context address)
+  (let* ((memory (wasm-context-memory context))
+         (end (loop for end from address
+                    until (zerop (aref memory end))
+                    finally (return end))))
+    (babel:octets-to-string memory
+                            :start address
+                            :end end)))
 
 (defmacro f32const (value)
   (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
