@@ -71,6 +71,7 @@ struct Module {
     memory_initial_size: usize,
     table_initial_size: usize,
     types: Vec<FuncType>,
+    tags: Vec<FuncType>,
     functions: Vec<Function>,
     exports: Vec<Export>,
     active_data: Vec<ActiveData>,
@@ -96,6 +97,7 @@ fn parse(bytes: &[u8]) -> Result<Module> {
     use wasmparser::Payload::*;
 
     let mut types = vec![];
+    let mut tags = vec![];
     let mut functions = vec![];
     let mut current_function = 0;
     let mut exports = vec![];
@@ -312,6 +314,14 @@ fn parse(bytes: &[u8]) -> Result<Module> {
                 });
                 current_function += 1;
             }
+            TagSection(reader) => {
+                println!("TagSection");
+                for tag in reader {
+                    let tag = tag?;
+                    println!(" {tag:?}");
+                    tags.push(types[tag.func_type_idx as usize].clone());
+                }
+            }
             DataSection(reader) => {
                 println!("DataSection");
                 for seg in reader {
@@ -375,6 +385,7 @@ fn parse(bytes: &[u8]) -> Result<Module> {
         memory_initial_size,
         table_initial_size,
         types,
+        tags,
         functions,
         exports,
         active_data,
@@ -610,6 +621,20 @@ enum Expr {
     F32Store(Box<Expr>, Box<Expr>, usize),
     F64Load(Box<Expr>, usize),
     F64Store(Box<Expr>, Box<Expr>, usize),
+    Try {
+        name: String,
+        body: Box<Expr>,
+        handlers: Vec<CatchHandler>,
+    },
+    Throw(usize, Vec<Expr>),
+    Rethrow(String),
+}
+
+#[derive(Debug)]
+struct CatchHandler {
+    tag: Option<u32>,
+    vars: Vec<String>,
+    body: Box<Expr>,
 }
 
 impl Expr {
@@ -659,6 +684,7 @@ enum BlockKind {
     Block,
     If,
     Loop,
+    Try,
 }
 
 #[derive(Debug)]
@@ -670,6 +696,17 @@ struct ActiveBlock {
     name: String,
     targeted: bool,
     stack: Vec<Expr>,
+    handlers: Vec<CatchHandler>,
+    try_body: Option<Vec<Expr>>,
+    current_handler: Option<(Option<u32>, Vec<String>)>,
+}
+
+fn single_expr(mut exprs: Vec<Expr>) -> Expr {
+    if exprs.len() == 1 {
+        exprs.pop().unwrap()
+    } else {
+        Expr::Progn(exprs)
+    }
 }
 
 fn append_side_effect(exprs: &mut Vec<Expr>, stack: &mut Vec<Expr>, new: Expr) {
@@ -728,8 +765,16 @@ fn expressionify_function_body(
             Loop { .. } if unreachable => {
                 unreachable_depth += 1;
             }
+            Try { .. } if unreachable => {
+                unreachable_depth += 1;
+            }
             Else if unreachable && unreachable_depth != 0 => {}
+            Catch { .. } if unreachable && unreachable_depth != 0 => {}
+            CatchAll if unreachable && unreachable_depth != 0 => {}
             End if unreachable && unreachable_depth != 0 => {
+                unreachable_depth -= 1;
+            }
+            Delegate { .. } if unreachable && unreachable_depth != 0 => {
                 unreachable_depth -= 1;
             }
 
@@ -742,6 +787,9 @@ fn expressionify_function_body(
                     name: format!("block-{pc}"),
                     targeted: false,
                     stack: std::mem::take(&mut stack),
+                    handlers: vec![],
+                    try_body: None,
+                    current_handler: None,
                 });
             }
             Loop { blockty } => {
@@ -753,6 +801,9 @@ fn expressionify_function_body(
                     name: format!("loop-{pc}"),
                     targeted: false,
                     stack: std::mem::take(&mut stack),
+                    handlers: vec![],
+                    try_body: None,
+                    current_handler: None,
                 });
             }
             If { blockty } => {
@@ -764,6 +815,23 @@ fn expressionify_function_body(
                     name: format!("if-{pc}"),
                     targeted: false,
                     stack: std::mem::take(&mut stack),
+                    handlers: vec![],
+                    try_body: None,
+                    current_handler: None,
+                });
+            }
+            Try { blockty } => {
+                block_stack.push(ActiveBlock {
+                    kind: BlockKind::Try,
+                    blockty,
+                    old_exprs: std::mem::take(&mut exprs),
+                    then: None,
+                    name: format!("try-{pc}"),
+                    targeted: false,
+                    stack: std::mem::take(&mut stack),
+                    handlers: vec![],
+                    try_body: None,
+                    current_handler: None,
                 });
             }
             Else => {
@@ -791,8 +859,13 @@ fn expressionify_function_body(
                 // A non-loop block targeted by Br means the End is reachable (forward jump).
                 // A loop targeted by Br means the back-edge exists, but the fall-through End
                 // is still unreachable.
-                let becomes_reachable =
-                    was_unreachable && entry.targeted && !matches!(entry.kind, BlockKind::Loop);
+                // A try that has a handler is reachable at its End even if the current handler
+                // ended in a br/throw: the try body's normal-completion path reaches the End.
+                let becomes_reachable = match entry.kind {
+                    BlockKind::Loop => false,
+                    BlockKind::Try => was_unreachable && (entry.targeted || entry.try_body.is_some()),
+                    _ => was_unreachable && entry.targeted,
+                };
 
                 unreachable = was_unreachable && !becomes_reachable;
 
@@ -827,6 +900,30 @@ fn expressionify_function_body(
                     }
                     BlockKind::Block => Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs)),
                     BlockKind::Loop => Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs)),
+                    BlockKind::Try => {
+                        let try_body = match entry.try_body {
+                            Some(body) => body,
+                            None => std::mem::take(&mut exprs),
+                        };
+                        let mut handlers = entry.handlers;
+                        if let Some((tag, vars)) = entry.current_handler {
+                            handlers.push(CatchHandler {
+                                tag,
+                                vars,
+                                body: Box::new(single_expr(std::mem::replace(
+                                    &mut exprs,
+                                    entry.old_exprs,
+                                ))),
+                            });
+                        } else {
+                            exprs = entry.old_exprs;
+                        }
+                        Expr::Try {
+                            name: entry.name.clone(),
+                            body: Box::new(single_expr(try_body)),
+                            handlers,
+                        }
+                    }
                 };
                 if entry.targeted {
                     if matches!(entry.kind, BlockKind::Loop) {
@@ -841,10 +938,101 @@ fn expressionify_function_body(
                     stack.push(final_expr);
                 }
             }
+            Catch { tag_index } => {
+                let was_unreachable = unreachable;
+                unreachable = false;
+                let idx = block_stack.len() - 1;
+                assert!(matches!(block_stack[idx].kind, BlockKind::Try));
+                if !was_unreachable && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
+                {
+                    exprs.push(stack.pop().unwrap());
+                }
+                assert!(was_unreachable || stack.is_empty());
+                let entry = &mut block_stack[idx];
+                if entry.try_body.is_none() {
+                    entry.try_body = Some(std::mem::take(&mut exprs));
+                } else {
+                    let (tag, vars) = entry.current_handler.take().unwrap();
+                    entry.handlers.push(CatchHandler {
+                        tag,
+                        vars,
+                        body: Box::new(single_expr(std::mem::take(&mut exprs))),
+                    });
+                }
+                stack.clear();
+                let ty = &module.tags[tag_index as usize];
+                let mut vars = vec![];
+                for i in 0..ty.params.len() {
+                    let var = format!("{}-exn-{i}", entry.name);
+                    vars.push(var.clone());
+                    stack.push(Expr::Local(var));
+                }
+                entry.current_handler = Some((Some(tag_index), vars));
+            }
+            CatchAll => {
+                let was_unreachable = unreachable;
+                unreachable = false;
+                let idx = block_stack.len() - 1;
+                assert!(matches!(block_stack[idx].kind, BlockKind::Try));
+                if !was_unreachable && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
+                {
+                    exprs.push(stack.pop().unwrap());
+                }
+                assert!(was_unreachable || stack.is_empty());
+                let entry = &mut block_stack[idx];
+                if entry.try_body.is_none() {
+                    entry.try_body = Some(std::mem::take(&mut exprs));
+                } else {
+                    let (tag, vars) = entry.current_handler.take().unwrap();
+                    entry.handlers.push(CatchHandler {
+                        tag,
+                        vars,
+                        body: Box::new(single_expr(std::mem::take(&mut exprs))),
+                    });
+                }
+                stack.clear();
+                entry.current_handler = Some((None, vec![]));
+            }
+            Delegate { relative_depth: _ } => {
+                let entry = block_stack.pop().unwrap();
+                assert!(matches!(entry.kind, BlockKind::Try));
+                assert!(entry.handlers.is_empty());
+                assert!(entry.try_body.is_none());
+                assert!(entry.current_handler.is_none());
+                let was_unreachable = unreachable;
+                if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
+                    exprs.push(stack.pop().unwrap());
+                }
+                assert!(was_unreachable || stack.is_empty());
+                stack = entry.stack;
+                let final_expr = Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs));
+                if unreachable || matches!(entry.blockty, wasmparser::BlockType::Empty) {
+                    append_side_effect(&mut exprs, &mut stack, final_expr);
+                } else {
+                    stack.push(final_expr);
+                }
+            }
 
             _ if unreachable => {} // Nothing
 
             // Normal execution.
+            Throw { tag_index } => {
+                let ty = &module.tags[tag_index as usize];
+                let payload = stack.split_off(stack.len() - ty.params.len());
+                append_side_effect(
+                    &mut exprs,
+                    &mut stack,
+                    Expr::Throw(tag_index as usize, payload),
+                );
+                unreachable = true;
+            }
+            Rethrow { relative_depth } => {
+                let target = block_stack.len() - 1 - (relative_depth as usize);
+                assert!(matches!(block_stack[target].kind, BlockKind::Try));
+                let exn_var = format!("{}-exn", block_stack[target].name);
+                append_side_effect(&mut exprs, &mut stack, Expr::Rethrow(exn_var));
+                unreachable = true;
+            }
             I32Const { value } => {
                 stack.push(Expr::Const(format!("{}", value as u32)));
             }
@@ -1786,6 +1974,49 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             result.push(')');
             result
         }
+        Try { name, body, handlers } => {
+            let exn_var = format!("{name}-exn");
+            let mut result = String::new();
+            result.push_str(&format!("(wasm-try ({exn_var})\n"));
+            result.push_str(&make_indent(indent + 2));
+            result.push_str(&convert_expr(body, indent + 2));
+            for h in handlers {
+                result.push('\n');
+                result.push_str(&make_indent(indent + 2));
+                if let Some(tag) = h.tag {
+                    result.push_str(&format!("(wasm-catch {tag} ({})\n", h.vars.join(" ")));
+                    result.push_str(&make_indent(indent + 4));
+                    result.push_str(&convert_expr(&h.body, indent + 4));
+                    result.push(')');
+                } else {
+                    result.push_str("(wasm-catch-all\n");
+                    result.push_str(&make_indent(indent + 4));
+                    result.push_str(&convert_expr(&h.body, indent + 4));
+                    result.push(')');
+                }
+            }
+            result.push(')');
+            result
+        }
+        Throw(tag, payload) => {
+            let mut result = String::new();
+            result.push_str(&format!("(wasm-throw-exception {tag}"));
+            let mut indent = indent;
+            indent += result.len();
+            for e in payload {
+                indent += 1;
+                result.push(' ');
+                let s = convert_expr(e, indent);
+                indent += s.len();
+                result.push_str(&s);
+            }
+            result.push(')');
+            result
+        }
+        Rethrow(exn_var) => format!(
+            "(error 'wasm-exception :tag (wasm-exception-tag {exn_var}) \
+             :payload (wasm-exception-payload {exn_var}))"
+        ),
     }
 }
 

@@ -15,6 +15,8 @@
            #:context #:global #:call-indirect #:select
            #:unreachable
            #:memory-copy #:memory-fill #:memory-grow #:memory-size
+           #:wasm-exception #:wasm-exception-tag #:wasm-exception-payload
+           #:wasm-throw-exception #:wasm-try #:wasm-catch #:wasm-catch-all
            #:i32load #:i32store
            #:i32load8u #:i32load8s #:i32store8
            #:i32load16u #:i32load16s #:i32store16
@@ -663,3 +665,41 @@
 
 (defun f64promotef32 (x)
   (float (the f32 x) 0.0d0))
+
+;; Exception handling (legacy wasm EH proposal)
+
+(define-condition wasm-exception (error)
+  ((tag :initarg :tag :reader wasm-exception-tag)
+   (payload :initarg :payload :reader wasm-exception-payload))
+  (:report (lambda (condition stream)
+             (format stream "wasm-exception tag=~S payload=~S"
+                     (wasm-exception-tag condition)
+                     (wasm-exception-payload condition)))))
+
+(defun wasm-throw-exception (tag &rest payload)
+  (error 'wasm-exception :tag tag :payload payload))
+
+(defun expand-try-clause (exn clauses)
+  (let ((handled (loop for clause in clauses
+                       for (kind tag vars . body) = clause
+                       collect (case kind
+                                 (wasm-catch
+                                  `((eql (wasm-exception-tag ,exn) ,tag)
+                                    (destructuring-bind ,vars (wasm-exception-payload ,exn)
+                                      (declare (ignorable ,@vars))
+                                      ,@body)))
+                                 (wasm-catch-all
+                                  `(t ,@(cdr clause)))
+                                 (otherwise
+                                  (error "Unknown wasm-try clause ~S" clause))))))
+    (if (and handled (eq (caar (last handled)) 't))
+        handled
+        (append handled
+                (list `(t (error 'wasm-exception
+                                 :tag (wasm-exception-tag ,exn)
+                                 :payload (wasm-exception-payload ,exn))))))))
+
+(defmacro wasm-try ((exn-var) body &rest clauses)
+  `(handler-case ,body
+     (wasm-exception (,exn-var)
+       (cond ,@(expand-try-clause exn-var clauses)))))
