@@ -1,4 +1,4 @@
-/// Emit Common Lisp source files from expression trees.
+//! Emit Common Lisp source files from expression trees.
 
 use anyhow::Result;
 use std::{fs, io::BufWriter, path::Path};

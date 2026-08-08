@@ -1,4 +1,4 @@
-/// The expression IR.
+//! The expression IR.
 
 #[derive(Debug)]
 pub enum Primitive {

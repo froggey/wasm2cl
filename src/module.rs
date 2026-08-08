@@ -1,4 +1,4 @@
-/// Parses a wasm binary into a `Module`.
+//! Parses a wasm binary into a `Module`.
 
 use anyhow::{Context, Result, bail};
 use wasmparser::Parser;
@@ -220,9 +220,15 @@ pub fn parse(bytes: &[u8]) -> Result<Module> {
                 println!("MemorySection");
                 for mem in reader {
                     let mem = mem?;
-                    assert!(!mem.memory64);
-                    assert!(!mem.shared);
-                    assert!(mem.page_size_log2.is_none());
+                    if mem.memory64 {
+                        bail!("unsupported: memory64 (only 32-bit memories supported)");
+                    }
+                    if mem.shared {
+                        bail!("unsupported: shared memory");
+                    }
+                    if mem.page_size_log2.is_some() {
+                        bail!("unsupported: custom memory page size");
+                    }
                     println!(" {mem:?}");
                     memory_initial_size = (mem.initial as usize) * WASM_PAGE_SIZE;
                 }

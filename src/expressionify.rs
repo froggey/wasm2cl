@@ -1,6 +1,6 @@
-/// Convert a function body's wasm operator stream into an `Expr` tree.
+//! Convert a function body's wasm operator stream into an `Expr` tree.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::expr::{CatchHandler, Expr, Primitive};
 use crate::module::{Function, Module, Type};
@@ -184,18 +184,16 @@ pub fn expressionify_function_body(
                         wasmparser::Catch::One { tag, label } => {
                             let target_idx = block_stack.len() - 1 - (label as usize);
                             let ty = &module.tags[tag as usize];
-                            assert!(
-                                ty.params.len() <= 1,
-                                "try_table catch payload with multiple values unsupported"
-                            );
+                            if ty.params.len() > 1 {
+                                bail!("try_table catch payload with multiple values unsupported");
+                            }
                             let vars: Vec<String> = (0..ty.params.len())
                                 .map(|i| format!("{name}-exn-{i}"))
                                 .collect();
                             let body = if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
-                                assert!(
-                                    ty.params.is_empty(),
-                                    "try_table catch delivering a value into a loop unsupported"
-                                );
+                                if !ty.params.is_empty() {
+                                    bail!("try_table catch delivering a value into a loop unsupported");
+                                }
                                 Expr::Go(block_stack[target_idx].name.clone())
                             } else if ty.params.is_empty() {
                                 Expr::Progn(vec![])
@@ -228,14 +226,12 @@ pub fn expressionify_function_body(
                         wasmparser::Catch::OneRef { tag, label } => {
                             let target_idx = block_stack.len() - 1 - (label as usize);
                             let ty = &module.tags[tag as usize];
-                            assert!(
-                                ty.params.len() <= 1,
-                                "try_table catch_ref payload with multiple values unsupported"
-                            );
-                            assert!(
-                                !matches!(block_stack[target_idx].kind, BlockKind::Loop),
-                                "try_table catch_ref delivering a value into a loop unsupported"
-                            );
+                            if ty.params.len() > 1 {
+                                bail!("try_table catch_ref payload with multiple values unsupported");
+                            }
+                            if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
+                                bail!("try_table catch_ref delivering a value into a loop unsupported");
+                            }
                             let vars: Vec<String> = (0..ty.params.len())
                                 .map(|i| format!("{name}-exn-{i}"))
                                 .collect();
@@ -261,10 +257,9 @@ pub fn expressionify_function_body(
                         }
                         wasmparser::Catch::AllRef { label } => {
                             let target_idx = block_stack.len() - 1 - (label as usize);
-                            assert!(
-                                !matches!(block_stack[target_idx].kind, BlockKind::Loop),
-                                "try_table catch_all_ref delivering a value into a loop unsupported"
-                            );
+                            if matches!(block_stack[target_idx].kind, BlockKind::Loop) {
+                                bail!("try_table catch_all_ref delivering a value into a loop unsupported");
+                            }
                             let ref_var = format!("{name}-exn-ref");
                             block_stack[target_idx].targeted = true;
                             CatchHandler {
@@ -294,14 +289,20 @@ pub fn expressionify_function_body(
                 let was_unreachable = unreachable;
                 unreachable = false;
                 let idx = block_stack.len() - 1;
-                assert!(matches!(block_stack[idx].kind, BlockKind::If));
-                assert!(block_stack[idx].then.is_none());
+                if !matches!(block_stack[idx].kind, BlockKind::If) {
+                    bail!("`else` outside of an `if` block");
+                }
+                if block_stack[idx].then.is_some() {
+                    bail!("`else` after a previous `else`");
+                }
                 if !was_unreachable
                     && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
                 {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(was_unreachable || stack.is_empty());
+                if !was_unreachable && !stack.is_empty() {
+                    bail!("stack not empty at `else`");
+                }
                 block_stack[idx].then = Some(std::mem::take(&mut exprs));
             }
             End => {
@@ -333,7 +334,9 @@ pub fn expressionify_function_body(
                 if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(was_unreachable || stack.is_empty());
+                if !was_unreachable && !stack.is_empty() {
+                    bail!("stack not empty at block `end`");
+                }
                 stack = entry.stack;
                 let mut final_expr = match entry.kind {
                     BlockKind::If => {
@@ -409,10 +412,9 @@ pub fn expressionify_function_body(
                     // off the block stack top-first (the exnref that was pushed
                     // last), while `(setf (values ...))` assigns first-value-first,
                     // so the locals are collected in stream order then reversed.
-                    assert!(
-                        !unreachable,
-                        "multi-value block result in unreachable code unsupported"
-                    );
+                    if unreachable {
+                        bail!("multi-value block result in unreachable code unsupported");
+                    }
                     let mut locals = Vec::with_capacity(n_results);
                     for _ in 0..n_results {
                         let op = ops.read()?;
@@ -420,8 +422,9 @@ pub fn expressionify_function_body(
                             wasmparser::Operator::LocalSet { local_index } => {
                                 locals.push(all_locals[local_index as usize].0.clone());
                             }
-                            _ => unimplemented!(
-                                "multi-value block results must be consumed by consecutive local.set"
+                            op => bail!(
+                                "multi-value block results must be consumed by consecutive \
+                                 local.set, got {op:?}"
                             ),
                         }
                     }
@@ -444,13 +447,17 @@ pub fn expressionify_function_body(
                 let was_unreachable = unreachable;
                 unreachable = false;
                 let idx = block_stack.len() - 1;
-                assert!(matches!(block_stack[idx].kind, BlockKind::Try));
+                if !matches!(block_stack[idx].kind, BlockKind::Try) {
+                    bail!("`catch` outside of a `try` block");
+                }
                 if !was_unreachable
                     && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
                 {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(was_unreachable || stack.is_empty());
+                if !was_unreachable && !stack.is_empty() {
+                    bail!("stack not empty at `catch`");
+                }
                 let entry = &mut block_stack[idx];
                 if entry.try_body.is_none() {
                     entry.try_body = Some(std::mem::take(&mut exprs));
@@ -477,13 +484,17 @@ pub fn expressionify_function_body(
                 let was_unreachable = unreachable;
                 unreachable = false;
                 let idx = block_stack.len() - 1;
-                assert!(matches!(block_stack[idx].kind, BlockKind::Try));
+                if !matches!(block_stack[idx].kind, BlockKind::Try) {
+                    bail!("`catch_all` outside of a `try` block");
+                }
                 if !was_unreachable
                     && !matches!(block_stack[idx].blockty, wasmparser::BlockType::Empty)
                 {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(was_unreachable || stack.is_empty());
+                if !was_unreachable && !stack.is_empty() {
+                    bail!("stack not empty at `catch_all`");
+                }
                 let entry = &mut block_stack[idx];
                 if entry.try_body.is_none() {
                     entry.try_body = Some(std::mem::take(&mut exprs));
@@ -501,15 +512,25 @@ pub fn expressionify_function_body(
             }
             Delegate { relative_depth: _ } => {
                 let entry = block_stack.pop().unwrap();
-                assert!(matches!(entry.kind, BlockKind::Try));
-                assert!(entry.handlers.is_empty());
-                assert!(entry.try_body.is_none());
-                assert!(entry.current_handler.is_none());
+                if !matches!(entry.kind, BlockKind::Try) {
+                    bail!("`delegate` outside of a `try` block");
+                }
+                if !entry.handlers.is_empty() {
+                    bail!("`delegate` after a `catch`");
+                }
+                if entry.try_body.is_some() {
+                    bail!("`delegate` with a stashed try body");
+                }
+                if entry.current_handler.is_some() {
+                    bail!("`delegate` after a handler was started");
+                }
                 let was_unreachable = unreachable;
                 if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
                     exprs.push(stack.pop().unwrap());
                 }
-                assert!(was_unreachable || stack.is_empty());
+                if !was_unreachable && !stack.is_empty() {
+                    bail!("stack not empty at `delegate`");
+                }
                 stack = entry.stack;
                 let final_expr = Expr::Progn(std::mem::replace(&mut exprs, entry.old_exprs));
                 if unreachable || matches!(entry.blockty, wasmparser::BlockType::Empty) {
@@ -534,7 +555,9 @@ pub fn expressionify_function_body(
             }
             Rethrow { relative_depth } => {
                 let target = block_stack.len() - 1 - (relative_depth as usize);
-                assert!(matches!(block_stack[target].kind, BlockKind::Try));
+                if !matches!(block_stack[target].kind, BlockKind::Try) {
+                    bail!("`rethrow` depth does not target a `try` block");
+                }
                 let exn_var = format!("{}-exn", block_stack[target].name);
                 append_side_effect(&mut exprs, &mut stack, Expr::Rethrow(exn_var));
                 unreachable = true;
@@ -620,14 +643,16 @@ pub fn expressionify_function_body(
                     }
                     // call for single value
                     1 => stack.push(Expr::Call(target.name(), args)),
-                    _ => unimplemented!("call producing multiple values"),
+                    n => bail!("call producing multiple values ({n})"),
                 }
             }
             CallIndirect {
                 type_index,
                 table_index,
             } => {
-                assert!(table_index == 0);
+                if table_index != 0 {
+                    bail!("call_indirect with non-zero table index ({table_index})");
+                }
                 let ty = &module.types[type_index as usize];
                 let idx = stack.pop().unwrap();
                 let args = stack.split_off(stack.len() - ty.params.len());
@@ -640,7 +665,7 @@ pub fn expressionify_function_body(
                     ),
                     // call for single value
                     1 => stack.push(Expr::CallIndirect(Box::new(idx), args)),
-                    _ => unimplemented!("call producing multiple values"),
+                    n => bail!("call_indirect producing multiple values ({n})"),
                 }
             }
             Br { relative_depth } => {
@@ -653,10 +678,13 @@ pub fn expressionify_function_body(
                     if matches!(block_stack[target].kind, BlockKind::Loop) {
                         Expr::Go(block_stack[target].name.clone())
                     } else {
-                        assert!(matches!(
-                            block_stack[target].blockty,
-                            wasmparser::BlockType::Empty
-                        ));
+                        if !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty) {
+                            bail!(
+                                "`br` to a value-typed non-loop block unsupported \
+                                 (target {:?})",
+                                block_stack[target].blockty
+                            );
+                        }
                         Expr::ReturnFrom(
                             block_stack[target].name.clone(),
                             Box::new(Expr::Progn(vec![])),
@@ -695,10 +723,9 @@ pub fn expressionify_function_body(
                 for target_idx in targets.targets() {
                     let target_idx = target_idx?;
                     let target = block_stack.len() - 1 - (target_idx as usize);
-                    assert!(matches!(
-                        block_stack[target].blockty,
-                        wasmparser::BlockType::Empty
-                    ));
+                    if !matches!(block_stack[target].blockty, wasmparser::BlockType::Empty) {
+                        bail!("br_table target with a value-typed block unsupported");
+                    }
                     block_stack[target].targeted = true;
                     target_code.push(if matches!(block_stack[target].kind, BlockKind::Loop) {
                         Expr::Go(block_stack[target].name.clone())
@@ -710,10 +737,9 @@ pub fn expressionify_function_body(
                     });
                 }
                 let default_target = block_stack.len() - 1 - (targets.default() as usize);
-                assert!(matches!(
-                    block_stack[default_target].blockty,
-                    wasmparser::BlockType::Empty
-                ));
+                if !matches!(block_stack[default_target].blockty, wasmparser::BlockType::Empty) {
+                    bail!("br_table default target with a value-typed block unsupported");
+                }
                 block_stack[default_target].targeted = true;
                 let default_code = if matches!(block_stack[default_target].kind, BlockKind::Loop) {
                     Expr::Go(block_stack[default_target].name.clone())
@@ -736,8 +762,9 @@ pub fn expressionify_function_body(
                 stack.push(Expr::Select(Box::new(lhs), Box::new(rhs), Box::new(cond)));
             }
             MemoryCopy { dst_mem, src_mem } => {
-                assert!(dst_mem == 0);
-                assert!(src_mem == 0);
+                if dst_mem != 0 || src_mem != 0 {
+                    bail!("memory.copy with non-zero memory index unsupported");
+                }
                 let n = stack.pop().unwrap();
                 let src = stack.pop().unwrap();
                 let dst = stack.pop().unwrap();
@@ -748,7 +775,9 @@ pub fn expressionify_function_body(
                 );
             }
             MemoryFill { mem } => {
-                assert!(mem == 0);
+                if mem != 0 {
+                    bail!("memory.fill with non-zero memory index unsupported");
+                }
                 let n = stack.pop().unwrap();
                 let value = stack.pop().unwrap();
                 let dst = stack.pop().unwrap();
@@ -759,11 +788,15 @@ pub fn expressionify_function_body(
                 );
             }
             MemorySize { mem } => {
-                assert!(mem == 0);
+                if mem != 0 {
+                    bail!("memory.size with non-zero memory index unsupported");
+                }
                 stack.push(Expr::Call("memory-size".to_string(), vec![]));
             }
             MemoryGrow { mem } => {
-                assert!(mem == 0);
+                if mem != 0 {
+                    bail!("memory.grow with non-zero memory index unsupported");
+                }
                 let n = stack.pop().unwrap();
                 stack.push(Expr::Call("memory-grow".to_string(), vec![n]));
             }
@@ -1119,7 +1152,7 @@ pub fn expressionify_function_body(
             F64ConvertI64S => prim_op1(Primitive::F64ConvertI64S, &mut stack),
             F64ReinterpretI64 => prim_op1(Primitive::F64ReinterpretI64, &mut stack),
             F64PromoteF32 => prim_op1(Primitive::F64PromoteF32, &mut stack),
-            op => unimplemented!("{op:?}"),
+            op => bail!("unsupported operator: {op:?}"),
         }
         pc += 1;
     }
@@ -1129,7 +1162,9 @@ pub fn expressionify_function_body(
             exprs.push(stack.pop().unwrap())
         }
 
-        assert!(stack.is_empty());
+        if !stack.is_empty() {
+            bail!("stack not empty at end of function body");
+        }
     }
 
     Ok(exprs)

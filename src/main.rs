@@ -2,15 +2,7 @@ use clap::Parser as ClapParser;
 use std::{fs, path::PathBuf};
 
 use anyhow::{Result, bail};
-
-mod emit;
-mod expr;
-mod expressionify;
-mod module;
-
-fn symbolicate(s: &str) -> String {
-    format!("|{s}|")
-}
+use wasm2cl::{emit, module};
 
 #[derive(ClapParser)]
 struct Cli {
