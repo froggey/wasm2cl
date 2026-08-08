@@ -474,14 +474,19 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
            +err-badf+))))
 
 (defun |fd_seek| (context fd offset whence new-offset)
-  (let ((file (resolve-fd context fd)))
+  (let ((file (resolve-fd context fd))
+        (offset (sign-extend offset 64)))
     (cond (file
-           (unless (or (eql whence +whence-set+)
-                       (and (eql whence +whence-cur+)
-                            (zerop offset)))
-             (error "TODO: Whence ~A" whence))
-           (when (eql whence +whence-set+)
-             (file-position (slot-value file '%stream) offset))
+           (cond ((eql whence +whence-set+)
+                  (file-position (slot-value file '%stream) offset))
+                 ((eql whence +whence-cur+)
+                  (file-position (slot-value file '%stream)
+                                 (+ offset (file-position (slot-value file '%stream)))))
+                 ((and (eql whence +whence-end+)
+                       (zerop offset))
+                  (file-position (slot-value file '%stream) :end))
+                 (t
+                  (error "TODO: Whence ~A ~A" whence (sign-extend offset 64))))
            (i64store context new-offset (file-position (slot-value file '%stream)))
            +success+)
           (t
