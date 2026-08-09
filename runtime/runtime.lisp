@@ -184,6 +184,10 @@
   personality
   start-fn)
 
+(defmethod print-object ((object wasm-context) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (format stream "~S" (wasm-context-personality object))))
+
 (defmacro define-wasm-function (name args return-type &body body)
   (declare (ignore return-type))
   `(defun ,name (context . ,(loop for (a) in args collect a))
