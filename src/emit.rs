@@ -607,7 +607,7 @@ pub fn emit_system(
     Ok(())
 }
 
-pub fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
+pub fn emit_main(module: &Module, package: &str, path: &Path, force_notinline: bool) -> Result<()> {
     use std::io::Write;
 
     let file = fs::File::create(path.join("main.lisp"))?;
@@ -643,6 +643,13 @@ pub fn emit_main(module: &Module, package: &str, path: &Path) -> Result<()> {
         )?;
     }
     writeln!(&mut out)?;
+
+    if force_notinline {
+        for f in module.functions.iter() {
+            writeln!(&mut out, "(declaim (notinline {}))", f.name())?;
+        }
+        writeln!(&mut out)?;
+    }
 
     writeln!(&mut out, "(defun wasm2cl-create-context (personality)")?;
     writeln!(

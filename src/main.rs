@@ -10,6 +10,10 @@ struct Cli {
     package: String,
     #[arg(long, default_value = "100")]
     functions_per_file: usize,
+    // Enable this to emit notinline declarations for every function
+    // and stop sbcl from using the specialized-xep mechanism.
+    #[arg(long, default_value = "false")]
+    notinline: bool,
 }
 
 fn main() -> Result<()> {
@@ -31,7 +35,7 @@ fn main() -> Result<()> {
     fs::create_dir_all(dir)?;
 
     emit::emit_system(&module, &cli.package, dir, cli.functions_per_file)?;
-    emit::emit_main(&module, &cli.package, dir)?;
+    emit::emit_main(&module, &cli.package, dir, cli.notinline)?;
     emit::emit_functions(&module, &cli.package, dir, cli.functions_per_file)?;
 
     //fs::write(&cli.output, emit(&module, &cli.package)?)?;
