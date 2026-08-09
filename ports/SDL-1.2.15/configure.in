@@ -2839,6 +2839,11 @@ case "$host" in
             SOURCES="$SOURCES $srcdir/src/video/iota/*.c"
             have_video=yes
         fi
+        # Set up files for the audio library
+        if test x$enable_audio = xyes; then
+            AC_DEFINE(SDL_AUDIO_DRIVER_IOTA)
+            SOURCES="$SOURCES $srcdir/src/audio/iota/*.c"
+        fi
         # Set up files for the timer library
         if test x$enable_timers = xyes; then
             AC_DEFINE(SDL_TIMER_UNIX)

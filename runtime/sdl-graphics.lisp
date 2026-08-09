@@ -1,6 +1,7 @@
 (defpackage :iota-sdl
   (:use :cl :wasm2cl)
   (:export #:*allow-grab*
+           #:*enable-audio*
            #:call-with-graphics-support
 
            #:|_iota_video_init|
@@ -11,7 +12,12 @@
            #:|_iota_grab_input|
            #:|_iota_warp_cursor|
            #:|_iota_show_cursor|
-           #:|_iota_set_caption|))
+           #:|_iota_set_caption|
+
+           #:|_iota_audio_init|
+           #:|_iota_audio_request|
+           #:|_iota_audio_push|
+           #:|_iota_audio_quit|))
 
 (in-package :iota-sdl)
 
@@ -19,6 +25,11 @@
   "When false, attempts to grab input will be ignored.
 Some window managers handle this badly and make it impossible to ungrab
 input from a frozen or otherwise uncooperative program.")
+
+(defparameter *enable-audio* t)
+(defparameter *audio-buffer-margin* 3
+  "Keep at least this much audio buffered.
+However, large/more buffers = higher latency.")
 
 (defvar *did-sdl-enabled-warning* nil)
 (defvar *sdl-enabled* nil)
@@ -30,32 +41,63 @@ input from a frozen or otherwise uncooperative program.")
 (defvar *sdl-renderer*)
 (defvar *sdl-texture*)
 
+(defvar *audio-device*)
+(defvar *audio-freq*)
+(defvar *audio-format*)
+(defvar *audio-channels*)
+(defvar *audio-samples*)
+(defvar *audio-size*)
+
+(defparameter *run-on-main-thread* t)
+
 ;; FIXME: This leaves the window open
 (defun call-with-graphics-support (fn)
-  (sdl2:init)
-  (unwind-protect
-       (sdl2:in-main-thread (:no-event t)
-         (let ((*sdl-enabled* t)
-               (*sdl-width* 0)
-               (*sdl-height* 0)
-               (*sdl-window* nil)
-               (*sdl-renderer* nil)
-               (*sdl-texture* nil))
-           (sdl2:with-sdl-event (event)
-             (setf *sdl-event* event)
-             (unwind-protect
-                  (funcall fn)
-               (when *sdl-texture*
-                 (sdl2:destroy-texture *sdl-texture*)
-                 (setf *sdl-texture* nil))
-               (when *sdl-renderer*
-                 (sdl2:destroy-renderer *sdl-renderer*)
-                 (setf *sdl-renderer* nil))
-               (when *sdl-window*
-                 (sdl2::sdl-set-window-grab *sdl-window* 0)
-                 (sdl2:destroy-window *sdl-window*)
-                 (setf *sdl-window* nil))))))
-    (sdl2:quit)))
+  (sdl2:init :audio)
+  (let ((original-terminal-io *terminal-io*)
+        (original-standard-output *standard-output*)
+        (original-standard-input *standard-input*)
+        (original-debug-io *debug-io*)
+        (original-trace-output *trace-output*)
+        (original-error-output *error-output*))
+    (flet ((body ()
+             (let ((*sdl-enabled* t)
+                   (*sdl-width* 0)
+                   (*sdl-height* 0)
+                   (*sdl-window* nil)
+                   (*sdl-renderer* nil)
+                   (*sdl-texture* nil)
+                   (*audio-device* nil)
+                   (*audio-freq* 0)
+                   (*audio-format* 0)
+                   (*audio-channels* 0)
+                   (*audio-samples* 0)
+                   (*audio-size* 0))
+               (sdl2:with-sdl-event (event)
+                 (setf *sdl-event* event)
+                 (unwind-protect
+                      (funcall fn)
+                   (when *sdl-texture*
+                     (sdl2:destroy-texture *sdl-texture*)
+                     (setf *sdl-texture* nil))
+                   (when *sdl-renderer*
+                     (sdl2:destroy-renderer *sdl-renderer*)
+                     (setf *sdl-renderer* nil))
+                   (when *sdl-window*
+                     (sdl2::sdl-set-window-grab *sdl-window* 0)
+                     (sdl2:destroy-window *sdl-window*)
+                     (setf *sdl-window* nil)))))))
+      (unwind-protect
+           (if *run-on-main-thread*
+               (sdl2:in-main-thread (:no-event t)
+                 (let ((*terminal-io* original-terminal-io)
+                       (*standard-output* original-standard-output)
+                       (*standard-input* original-standard-input)
+                       (*debug-io* original-debug-io)
+                       (*trace-output* original-trace-output)
+                       (*error-output* original-error-output))
+                   (body)))
+               (body))
+        (sdl2:quit)))))
 
 (defun |_iota_video_init| (context)
   (declare (ignore context))
@@ -349,3 +391,48 @@ input from a frozen or otherwise uncooperative program.")
 (defun |_iota_set_caption| (context title icon)
   (declare (ignore icon))
   (sdl2:set-window-title *sdl-window* (read-c-string context title)))
+
+(defun |_iota_audio_init| (context freq format channels samples size)
+  (declare (ignore context))
+  (setf *audio-freq* freq
+        *audio-format* format
+        *audio-channels* channels
+        *audio-samples* samples
+        *audio-size* size)
+  (setf *audio-device* nil)
+  (when (not (and *enable-audio* *sdl-enabled*))
+    ;; Immediate success when disabled.
+    (return-from |_iota_audio_init| 0))
+  (let ((dev (plus-c:c-let ((desired sdl2-ffi:sdl-audio-spec :calloc t))
+               (setf (plus-c:c-ref desired sdl2-ffi:sdl-audio-spec :freq) freq
+                     (plus-c:c-ref desired sdl2-ffi:sdl-audio-spec :format) format
+                     (plus-c:c-ref desired sdl2-ffi:sdl-audio-spec :channels) channels
+                     (plus-c:c-ref desired sdl2-ffi:sdl-audio-spec :samples) samples)
+               (sdl2-ffi.functions:sdl-open-audio-device nil 0 desired nil 0))))
+    (when (zerop dev)
+      (return-from |_iota_audio_init| 1))
+    (sdl2-ffi.functions:sdl-pause-audio-device dev 0)
+    (setf *audio-device* dev)
+    0))
+
+(defun |_iota_audio_request| (context)
+  (declare (ignore context))
+  (if *audio-device*
+      (let ((watermark (* *audio-buffer-margin* *audio-size*))
+            (queued (sdl2-ffi.functions:sdl-get-queued-audio-size *audio-device*)))
+        (max 0 (- watermark queued)))
+      0))
+
+(defun |_iota_audio_push| (context stream len)
+  (when *audio-device*
+    (cffi:with-pointer-to-vector-data (base (wasm-context-memory context))
+      (sdl2-ffi.functions:sdl-queue-audio
+       *audio-device* (cffi:inc-pointer base stream) len)))
+  nil)
+
+(defun |_iota_audio_quit| (context)
+  (declare (ignore context))
+  (when *audio-device*
+    (sdl2-ffi.functions:sdl-close-audio-device *audio-device*)
+    (setf *audio-device* nil))
+  nil)

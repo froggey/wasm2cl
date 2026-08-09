@@ -31,6 +31,8 @@
 #include "SDL_iotavideo.h"
 #include "SDL_iotaevents_c.h"
 
+int IOTAAUD_Pump(void);
+
 enum iota_event_type {
     ievt_quit = 0,
     ievt_key_down = 1,
@@ -95,6 +97,10 @@ void IOTA_PumpEvents(_THIS)
         }
         }
     }
+
+    /* Since there's no audio thread, we need to drive audio somehow.
+     * PumpEvents is the only regular thing we have, so drive it from here */
+    IOTAAUD_Pump();
 }
 
 void IOTA_InitOSKeymap(_THIS)

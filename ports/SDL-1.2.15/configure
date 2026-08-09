@@ -24300,6 +24300,12 @@ case "$host" in
             SOURCES="$SOURCES $srcdir/src/video/iota/*.c"
             have_video=yes
         fi
+        # Set up files for the audio library
+        if test x$enable_audio = xyes; then
+            printf '%s\n' "#define SDL_AUDIO_DRIVER_IOTA 1" >>confdefs.h
+
+            SOURCES="$SOURCES $srcdir/src/audio/iota/*.c"
+        fi
         # Set up files for the timer library
         if test x$enable_timers = xyes; then
             printf '%s\n' "#define SDL_TIMER_UNIX 1" >>confdefs.h
