@@ -89,21 +89,55 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
             if let Expr::Prog1(_, exprs) = &mut self.stack[last] {
                 exprs.push(new);
             } else {
-                let value = self.stack.pop().unwrap();
+                let value = self.pop1();
                 self.stack.push(Expr::Prog1(Box::new(value), vec![new]));
             }
         }
     }
 
     fn prim_op1(&mut self, prim: Primitive) {
-        let val = self.stack.pop().unwrap();
+        let val = self.pop1();
         self.stack.push(Expr::Prim(prim, vec![val]));
     }
 
     fn prim_op2(&mut self, prim: Primitive) {
-        let rhs = self.stack.pop().unwrap();
-        let lhs = self.stack.pop().unwrap();
+        let rhs = self.pop1();
+        let lhs = self.pop1();
         self.stack.push(Expr::Prim(prim, vec![lhs, rhs]));
+    }
+
+    fn pop1(&mut self) -> Expr {
+        self.stack.pop().unwrap()
+    }
+
+    fn pop_n(&mut self, n: usize) -> Vec<Expr> {
+        self.stack.split_off(self.stack.len() - n)
+    }
+
+    fn resolve_depth(&self, depth: u32) -> usize {
+        self.block_stack.len() - 1 - (depth as usize)
+    }
+
+    fn branch_expr(&self, idx: usize) -> Expr {
+        if matches!(self.block_stack[idx].kind, BlockKind::Loop) {
+            Expr::Go(self.block_stack[idx].name.clone())
+        } else {
+            Expr::ReturnFrom(
+                self.block_stack[idx].name.clone(),
+                Box::new(Expr::Progn(vec![])),
+            )
+        }
+    }
+
+    fn emit_result(&mut self, op: &str, expr: Expr, n_results: usize) -> Result<()> {
+        match n_results {
+            // call for effect
+            0 => self.append_side_effect(expr),
+            // call for single value
+            1 => self.stack.push(expr),
+            n => bail!("{op} producing multiple values ({n})"),
+        }
+        Ok(())
     }
 
     fn run(&mut self) -> Result<Vec<Expr>> {
@@ -111,7 +145,6 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
 
         loop {
             let op = self.ops.read()?;
-            //println!("{op:?}  {:?}  {:?}  {:?}  {:?}", self.stack, self.exprs, self.block_stack, self.unreachable, self.unreachable_depth);
             match op {
                 If { .. } if self.unreachable => {
                     self.unreachable_depth += 1;
@@ -355,7 +388,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
 
         if !self.unreachable {
             if !self.func.ty.results.is_empty() {
-                self.exprs.push(self.stack.pop().unwrap())
+                let value = self.pop1();
+                self.exprs.push(value);
             }
 
             if !self.stack.is_empty() {
@@ -407,7 +441,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         for catch in try_table.catches {
             let handler = match catch {
                 wasmparser::Catch::One { tag, label } => {
-                    let target_idx = self.block_stack.len() - 1 - (label as usize);
+                    let target_idx = self.resolve_depth(label);
                     let ty = &self.module.tags[tag as usize];
                     if ty.params.len() > 1 {
                         bail!("try_table catch payload with multiple values unsupported");
@@ -434,7 +468,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                     }
                 }
                 wasmparser::Catch::All { label } => {
-                    let target_idx = self.block_stack.len() - 1 - (label as usize);
+                    let target_idx = self.resolve_depth(label);
                     let body = if matches!(self.block_stack[target_idx].kind, BlockKind::Loop) {
                         Expr::Go(self.block_stack[target_idx].name.clone())
                     } else {
@@ -449,7 +483,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                     }
                 }
                 wasmparser::Catch::OneRef { tag, label } => {
-                    let target_idx = self.block_stack.len() - 1 - (label as usize);
+                    let target_idx = self.resolve_depth(label);
                     let ty = &self.module.tags[tag as usize];
                     if ty.params.len() > 1 {
                         bail!("try_table catch_ref payload with multiple values unsupported");
@@ -481,7 +515,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                     }
                 }
                 wasmparser::Catch::AllRef { label } => {
-                    let target_idx = self.block_stack.len() - 1 - (label as usize);
+                    let target_idx = self.resolve_depth(label);
                     if matches!(self.block_stack[target_idx].kind, BlockKind::Loop) {
                         bail!("try_table catch_all_ref delivering a value into a loop unsupported");
                     }
@@ -525,7 +559,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if !was_unreachable
             && !matches!(self.block_stack[idx].blockty, wasmparser::BlockType::Empty)
         {
-            self.exprs.push(self.stack.pop().unwrap());
+            let value = self.pop1();
+            self.exprs.push(value);
         }
         if !was_unreachable && !self.stack.is_empty() {
             bail!("stack not empty at `else`");
@@ -554,7 +589,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         // End of the current block.
         // Only pop the block's result from the stack on reachable fall-through.
         if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
-            self.exprs.push(self.stack.pop().unwrap());
+            let value = self.pop1();
+            self.exprs.push(value);
         }
         if !was_unreachable && !self.stack.is_empty() {
             bail!("stack not empty at block `end`");
@@ -570,7 +606,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 } else {
                     (std::mem::replace(&mut self.exprs, entry.old_exprs), vec![])
                 };
-                let test = self.stack.pop().unwrap();
+                let test = self.pop1();
                 Expr::If(
                     Box::new(test),
                     Box::new(if then.len() == 1 {
@@ -676,7 +712,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if !was_unreachable
             && !matches!(self.block_stack[idx].blockty, wasmparser::BlockType::Empty)
         {
-            self.exprs.push(self.stack.pop().unwrap());
+            let value = self.pop1();
+            self.exprs.push(value);
         }
         if !was_unreachable && !self.stack.is_empty() {
             bail!("stack not empty at `catch`");
@@ -715,7 +752,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if !was_unreachable
             && !matches!(self.block_stack[idx].blockty, wasmparser::BlockType::Empty)
         {
-            self.exprs.push(self.stack.pop().unwrap());
+            let value = self.pop1();
+            self.exprs.push(value);
         }
         if !was_unreachable && !self.stack.is_empty() {
             bail!("stack not empty at `catch_all`");
@@ -753,7 +791,8 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         }
         let was_unreachable = self.unreachable;
         if !was_unreachable && !matches!(entry.blockty, wasmparser::BlockType::Empty) {
-            self.exprs.push(self.stack.pop().unwrap());
+            let value = self.pop1();
+            self.exprs.push(value);
         }
         if !was_unreachable && !self.stack.is_empty() {
             bail!("stack not empty at `delegate`");
@@ -770,13 +809,13 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
 
     fn throw_op(&mut self, tag_index: u32) {
         let ty = &self.module.tags[tag_index as usize];
-        let payload = self.stack.split_off(self.stack.len() - ty.params.len());
+        let payload = self.pop_n(ty.params.len());
         self.append_side_effect(Expr::Throw(tag_index as usize, payload));
         self.unreachable = true;
     }
 
     fn rethrow_op(&mut self, relative_depth: u32) -> Result<()> {
-        let target = self.block_stack.len() - 1 - (relative_depth as usize);
+        let target = self.resolve_depth(relative_depth);
         if !matches!(self.block_stack[target].kind, BlockKind::Try) {
             bail!("`rethrow` depth does not target a `try` block");
         }
@@ -787,7 +826,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn throw_ref_op(&mut self) {
-        let exnref = self.stack.pop().unwrap();
+        let exnref = self.pop1();
         self.append_side_effect(Expr::ThrowRef(Box::new(exnref)));
         self.unreachable = true;
     }
@@ -815,7 +854,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn global_set_op(&mut self, global_index: u32) {
-        let value = self.stack.pop().unwrap();
+        let value = self.pop1();
         self.append_side_effect(Expr::GlobalSet(global_index as usize, Box::new(value)));
     }
 
@@ -825,7 +864,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn local_set_op(&mut self, local_index: u32) {
-        let value = self.stack.pop().unwrap();
+        let value = self.pop1();
         self.append_side_effect(Expr::Setf(
             self.all_locals[local_index as usize].0.clone(),
             Box::new(value),
@@ -833,7 +872,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn local_tee_op(&mut self, local_index: u32) {
-        let value = self.stack.pop().unwrap();
+        let value = self.pop1();
         self.stack.push(Expr::Setf(
             self.all_locals[local_index as usize].0.clone(),
             Box::new(value),
@@ -841,7 +880,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn drop_op(&mut self) {
-        let value = self.stack.pop().unwrap();
+        let value = self.pop1();
         self.append_side_effect(value);
     }
 
@@ -854,7 +893,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         let value = if self.func.ty.results.is_empty() {
             Expr::Progn(vec![])
         } else {
-            self.stack.pop().unwrap()
+            self.pop1()
         };
         self.append_side_effect(Expr::ReturnFrom("nil".to_string(), Box::new(value)));
         self.unreachable = true;
@@ -862,17 +901,12 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
 
     fn call_op(&mut self, function_index: u32) -> Result<()> {
         let target = &self.module.functions[function_index as usize];
-        let args = self
-            .stack
-            .split_off(self.stack.len() - target.ty.params.len());
-        match target.ty.results.len() {
-            // call for effect
-            0 => self.append_side_effect(Expr::Call(target.name(), args)),
-            // call for single value
-            1 => self.stack.push(Expr::Call(target.name(), args)),
-            n => bail!("call producing multiple values ({n})"),
-        }
-        Ok(())
+        let args = self.pop_n(target.ty.params.len());
+        self.emit_result(
+            "call",
+            Expr::Call(target.name(), args),
+            target.ty.results.len(),
+        )
     }
 
     fn call_indirect_op(&mut self, type_index: u32, table_index: u32) -> Result<()> {
@@ -880,55 +914,44 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
             bail!("call_indirect with non-zero table index ({table_index})");
         }
         let ty = &self.module.types[type_index as usize];
-        let idx = self.stack.pop().unwrap();
-        let args = self.stack.split_off(self.stack.len() - ty.params.len());
-        match ty.results.len() {
-            // call for effect
-            0 => self.append_side_effect(Expr::CallIndirect(Box::new(idx), args)),
-            // call for single value
-            1 => self.stack.push(Expr::CallIndirect(Box::new(idx), args)),
-            n => bail!("call_indirect producing multiple values ({n})"),
-        }
-        Ok(())
+        let idx = self.pop1();
+        let args = self.pop_n(ty.params.len());
+        self.emit_result(
+            "call_indirect",
+            Expr::CallIndirect(Box::new(idx), args),
+            ty.results.len(),
+        )
     }
 
     fn br_op(&mut self, relative_depth: u32) -> Result<()> {
-        let target = self.block_stack.len() - 1 - (relative_depth as usize);
+        let target = self.resolve_depth(relative_depth);
         self.unreachable = true;
         self.block_stack[target].targeted = true;
-        self.append_side_effect(
-            if matches!(self.block_stack[target].kind, BlockKind::Loop) {
-                Expr::Go(self.block_stack[target].name.clone())
-            } else {
-                if !matches!(
-                    self.block_stack[target].blockty,
-                    wasmparser::BlockType::Empty
-                ) {
-                    bail!(
-                        "`br` to a value-typed non-loop block unsupported \
-                         (target {:?})",
-                        self.block_stack[target].blockty
-                    );
-                }
-                Expr::ReturnFrom(
-                    self.block_stack[target].name.clone(),
-                    Box::new(Expr::Progn(vec![])),
-                )
-            },
-        );
+        if !matches!(self.block_stack[target].kind, BlockKind::Loop)
+            && !matches!(
+                self.block_stack[target].blockty,
+                wasmparser::BlockType::Empty
+            )
+        {
+            bail!(
+                "`br` to a value-typed non-loop block unsupported (target {:?})",
+                self.block_stack[target].blockty
+            );
+        }
+        self.append_side_effect(self.branch_expr(target));
         Ok(())
     }
 
     fn br_if_op(&mut self, relative_depth: u32) {
-        let target = self.block_stack.len() - 1 - (relative_depth as usize);
-        let test = self.stack.pop().unwrap();
+        let target = self.resolve_depth(relative_depth);
+        let test = self.pop1();
         self.block_stack[target].targeted = true;
         let value = if !matches!(self.block_stack[target].kind, BlockKind::Loop)
             && !matches!(
                 self.block_stack[target].blockty,
                 wasmparser::BlockType::Empty
             ) {
-            self.stack.pop().unwrap()
+            self.pop1()
         } else {
             Expr::Progn(vec![])
         };
@@ -946,11 +969,11 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn br_table_op(&mut self, targets: wasmparser::BrTable<'o>) -> Result<()> {
-        let idx = self.stack.pop().unwrap();
+        let idx = self.pop1();
         let mut target_code = vec![];
         for target_idx in targets.targets() {
             let target_idx = target_idx?;
-            let target = self.block_stack.len() - 1 - (target_idx as usize);
+            let target = self.resolve_depth(target_idx);
             if !matches!(
                 self.block_stack[target].blockty,
                 wasmparser::BlockType::Empty
@@ -958,18 +981,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 bail!("br_table target with a value-typed block unsupported");
             }
             self.block_stack[target].targeted = true;
-            target_code.push(
-                if matches!(self.block_stack[target].kind, BlockKind::Loop) {
-                    Expr::Go(self.block_stack[target].name.clone())
-                } else {
-                    Expr::ReturnFrom(
-                        self.block_stack[target].name.clone(),
-                        Box::new(Expr::Progn(vec![])),
-                    )
-                },
-            );
+            target_code.push(self.branch_expr(target));
         }
-        let default_target = self.block_stack.len() - 1 - (targets.default() as usize);
+        let default_target = self.resolve_depth(targets.default());
         if !matches!(
             self.block_stack[default_target].blockty,
             wasmparser::BlockType::Empty
@@ -977,14 +991,7 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
             bail!("br_table default target with a value-typed block unsupported");
         }
         self.block_stack[default_target].targeted = true;
-        let default_code = if matches!(self.block_stack[default_target].kind, BlockKind::Loop) {
-            Expr::Go(self.block_stack[default_target].name.clone())
-        } else {
-            Expr::ReturnFrom(
-                self.block_stack[default_target].name.clone(),
-                Box::new(Expr::Progn(vec![])),
-            )
-        };
+        let default_code = self.branch_expr(default_target);
         self.append_side_effect(Expr::Switch(
             Box::new(idx),
             Box::new(default_code),
@@ -994,9 +1001,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn select_op(&mut self) {
-        let cond = self.stack.pop().unwrap();
-        let rhs = self.stack.pop().unwrap();
-        let lhs = self.stack.pop().unwrap();
+        let cond = self.pop1();
+        let rhs = self.pop1();
+        let lhs = self.pop1();
         self.stack
             .push(Expr::Select(Box::new(lhs), Box::new(rhs), Box::new(cond)));
     }
@@ -1005,9 +1012,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if dst_mem != 0 || src_mem != 0 {
             bail!("memory.copy with non-zero memory index unsupported");
         }
-        let n = self.stack.pop().unwrap();
-        let src = self.stack.pop().unwrap();
-        let dst = self.stack.pop().unwrap();
+        let n = self.pop1();
+        let src = self.pop1();
+        let dst = self.pop1();
         self.append_side_effect(Expr::Call("memory-copy".to_string(), vec![dst, src, n]));
         Ok(())
     }
@@ -1016,9 +1023,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if mem != 0 {
             bail!("memory.fill with non-zero memory index unsupported");
         }
-        let n = self.stack.pop().unwrap();
-        let value = self.stack.pop().unwrap();
-        let dst = self.stack.pop().unwrap();
+        let n = self.pop1();
+        let value = self.pop1();
+        let dst = self.pop1();
         self.append_side_effect(Expr::Call("memory-fill".to_string(), vec![dst, value, n]));
         Ok(())
     }
@@ -1036,21 +1043,21 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         if mem != 0 {
             bail!("memory.grow with non-zero memory index unsupported");
         }
-        let n = self.stack.pop().unwrap();
+        let n = self.pop1();
         self.stack
             .push(Expr::Call("memory-grow".to_string(), vec![n]));
         Ok(())
     }
 
     fn i32_load_op(&mut self, ext: Option<(usize, bool)>, memarg: wasmparser::MemArg) {
-        let addr = self.stack.pop().unwrap();
+        let addr = self.pop1();
         self.stack
             .push(Expr::I32Load(ext, Box::new(addr), memarg.offset as usize));
     }
 
     fn i32_store_op(&mut self, width: Option<usize>, memarg: wasmparser::MemArg) {
-        let value = self.stack.pop().unwrap();
-        let addr = self.stack.pop().unwrap();
+        let value = self.pop1();
+        let addr = self.pop1();
         self.append_side_effect(Expr::I32Store(
             width,
             Box::new(addr),
@@ -1060,14 +1067,14 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn i64_load_op(&mut self, ext: Option<(usize, bool)>, memarg: wasmparser::MemArg) {
-        let addr = self.stack.pop().unwrap();
+        let addr = self.pop1();
         self.stack
             .push(Expr::I64Load(ext, Box::new(addr), memarg.offset as usize));
     }
 
     fn i64_store_op(&mut self, width: Option<usize>, memarg: wasmparser::MemArg) {
-        let value = self.stack.pop().unwrap();
-        let addr = self.stack.pop().unwrap();
+        let value = self.pop1();
+        let addr = self.pop1();
         self.append_side_effect(Expr::I64Store(
             width,
             Box::new(addr),
@@ -1077,14 +1084,14 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn f32_load_op(&mut self, memarg: wasmparser::MemArg) {
-        let addr = self.stack.pop().unwrap();
+        let addr = self.pop1();
         self.stack
             .push(Expr::F32Load(Box::new(addr), memarg.offset as usize));
     }
 
     fn f32_store_op(&mut self, memarg: wasmparser::MemArg) {
-        let value = self.stack.pop().unwrap();
-        let addr = self.stack.pop().unwrap();
+        let value = self.pop1();
+        let addr = self.pop1();
         self.append_side_effect(Expr::F32Store(
             Box::new(addr),
             Box::new(value),
@@ -1093,14 +1100,14 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
     }
 
     fn f64_load_op(&mut self, memarg: wasmparser::MemArg) {
-        let addr = self.stack.pop().unwrap();
+        let addr = self.pop1();
         self.stack
             .push(Expr::F64Load(Box::new(addr), memarg.offset as usize));
     }
 
     fn f64_store_op(&mut self, memarg: wasmparser::MemArg) {
-        let value = self.stack.pop().unwrap();
-        let addr = self.stack.pop().unwrap();
+        let value = self.pop1();
+        let addr = self.pop1();
         self.append_side_effect(Expr::F64Store(
             Box::new(addr),
             Box::new(value),
