@@ -1,3 +1,5 @@
+;;; Implementation of the `iota-sdl` API implemented using SDL2
+
 (defpackage :iota-sdl
   (:use :cl :wasm2cl)
   (:export #:*allow-grab*

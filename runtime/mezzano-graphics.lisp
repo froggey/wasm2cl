@@ -1,0 +1,280 @@
+;;; Implementation of the `iota-sdl` API implemented using Mezzano
+
+(defpackage :iota-sdl
+  (:use :cl :wasm2cl)
+  (:export #:call-with-graphics-support
+
+           #:|_iota_video_init|
+           #:|_iota_video_quit|
+           #:|_iota_set_video_mode|
+           #:|_iota_video_update|
+           #:|_iota_poll_event|
+           #:|_iota_grab_input|
+           #:|_iota_warp_cursor|
+           #:|_iota_show_cursor|
+           #:|_iota_set_caption|
+
+           #:|_iota_audio_init|
+           #:|_iota_audio_request|
+           #:|_iota_audio_push|
+           #:|_iota_audio_quit|))
+
+(in-package :iota-sdl)
+
+(defvar *graphics-enabled* nil)
+
+(defvar *graphics-width*)
+(defvar *graphics-height*)
+(defvar *graphics-fifo*)
+(defvar *graphics-window*)
+(defvar *graphics-frame*)
+
+(defun call-with-graphics-support (fn)
+  (let ((*graphics-enabled* t)
+        (*graphics-width* 0)
+        (*graphics-height* 0)
+        (*graphics-fifo* (mezzano.supervisor:make-fifo 50))
+        (*graphics-window* nil)
+        (*graphics-frame* nil))
+    (unwind-protect
+         (funcall fn)
+      (when *graphics-window*
+        (mezzano.gui.compositor:close-window *graphics-window*)))))
+
+(defun |_iota_video_init| (context)
+  (declare (ignore context))
+  (if *graphics-enabled*
+      0
+      1))
+
+(defun |_iota_video_quit| (context)
+  (declare (ignore context))
+  ;; TODO: Clean up any window here.
+  0)
+
+(defun compute-window-size (width height)
+  ;; Make a fake frame to get the frame size.
+  (multiple-value-bind (left right top bottom)
+      (mezzano.gui.widgets:frame-size (make-instance 'mezzano.gui.widgets:frame))
+    (values (+ left (max 32 width) right)
+            (+ top (max 32 height) bottom))))
+
+(defun |_iota_set_video_mode| (context width height)
+  (declare (ignore context))
+  (cond (*graphics-enabled*
+         (multiple-value-bind (real-width real-height)
+             (compute-window-size width height)
+           (when *graphics-window*
+             (mezzano.gui.compositor:close-window *graphics-window*)
+             (setf *graphics-window* nil))
+           (setf *graphics-window* (mezzano.gui.compositor:make-window
+                                    *graphics-fifo*
+                                    real-width
+                                    real-height)
+                 *graphics-width* width
+                 *graphics-height* height)
+           (setf *graphics-frame*
+                 (make-instance 'mezzano.gui.widgets:frame
+                                :framebuffer (mezzano.gui.compositor:window-buffer *graphics-window*)
+                                :title "wasm2cl host"
+                                :close-button-p t
+                                :damage-function (mezzano.gui.widgets:default-damage-function *graphics-window*)))
+           (mezzano.gui.widgets:draw-frame *graphics-frame*)
+         0))
+        (t
+         1)))
+
+(defun |_iota_video_update| (context buf)
+  (declare (ignore context))
+  (declare (optimize (speed 3) (safety 0))
+           (type (unsigned-byte 32) buf))
+  (when (not (zerop buf))
+    (multiple-value-bind (left right top bottom)
+        (mezzano.gui.widgets:frame-size *graphics-frame*)
+      (declare (ignore right bottom)
+               (type fixnum left top))
+      (loop
+         with framebuffer = (mezzano.gui.compositor:window-buffer *graphics-window*)
+         with pixels = (the (simple-array (unsigned-byte 32) (* *))
+                            (mezzano.gui:surface-pixels framebuffer))
+         with win-width fixnum = (mezzano.gui:surface-width framebuffer)
+         with g-width fixnum = *graphics-width*
+         with g-height fixnum = *graphics-height*
+         for y fixnum below g-height
+         do
+           (loop
+              for x fixnum below g-width
+              do (setf (row-major-aref pixels (the fixnum (+ left (the fixnum (+ x (the fixnum (* (the fixnum (+ top y)) win-width)))))))
+                       (logior #xFF000000
+                               (i32load context (the fixnum (+ buf (the fixnum (* (the fixnum (+ x (the fixnum (* y g-width)))) 4)))))))))
+      (mezzano.gui.compositor:damage-window *graphics-window*
+                                            left top
+                                            *graphics-width* *graphics-height*)))
+  0)
+
+(defun translate-sdl-keysym (translated-key original-key)
+  (case original-key
+    (#\Newline        13)
+    (#\F1            282)
+    (#\F2            283)
+    (#\F3            284)
+    (#\F4            285)
+    (#\F5            286)
+    (#\F6            287)
+    (#\F7            288)
+    (#\F8            289)
+    (#\F9            290)
+    (#\F10           291)
+    (#\F11           292)
+    (#\F12           293)
+    (#\F13           294)
+    (#\F14           295)
+    (#\F15           296)
+    (#\Insert        277)
+    (#\Delete        127)
+    (#\Home          278)
+    (#\End           279)
+    (#\Page-Up       280)
+    (#\Page-Down     281)
+    (#\Left-Arrow    276)
+    (#\Right-Arrow   275)
+    (#\Up-Arrow      273)
+    (#\Down-Arrow    274)
+    (#\Menu          319)
+    (#\Print-Screen  317)
+    (#\Pause          19)
+    (#\Break         318)
+    (#\Caps-Lock     301)
+    (#\Left-Shift    305)
+    (#\Right-Shift   304)
+    (#\Left-Control  306)
+    (#\Right-Control 305)
+    (#\Left-Meta     308)
+    (#\Right-Meta    307)
+    (#\Left-Super    312)
+    (#\Right-Super   311)
+    (#\KP-0          256)
+    (#\KP-1          257)
+    (#\KP-2          258)
+    (#\KP-3          259)
+    (#\KP-4          260)
+    (#\KP-5          261)
+    (#\KP-6          262)
+    (#\KP-7          263)
+    (#\KP-8          264)
+    (#\KP-9          265)
+    (#\KP-Period     266)
+    (#\KP-Divide     267)
+    (#\KP-Multiply   268)
+    (#\KP-Minus      269)
+    (#\KP-Plus       270)
+    (#\KP-Enter      271)
+    (t (char-code translated-key))))
+
+(defun |_iota_poll_event| (context buf)
+  (loop
+     (let ((evt (mezzano.supervisor:fifo-pop *graphics-fifo* nil)))
+       (when (not evt) (return 0))
+       (typecase evt
+         ((or mezzano.gui.compositor:window-close-event
+              mezzano.gui.compositor:quit-event)
+          (i32store context buf 0) ; quit
+          (return 1))
+         (mezzano.gui.compositor:mouse-event
+          (handler-case
+              (progn
+                (mezzano.gui.widgets:frame-mouse-event *graphics-frame* evt)
+                ;; FIXME: This needs to send multiple events...
+                (cond ((not (zerop (mezzano.gui.compositor:mouse-button-change evt)))
+                       ;; Find the changed button. Hope only one changed.
+                       (let ((button (loop
+                                        for i from 0
+                                        until (logbitp i (mezzano.gui.compositor:mouse-button-change evt))
+                                        finally (return i))))
+                         (i32store context
+                                   buf
+                                   (if (logbitp button (mezzano.gui.compositor:mouse-button-state evt))
+                                       4 ; mouse-button-down
+                                       5)) ; mouse-button-up
+                          (i32store context (+ buf 4) (1+ button))))
+                      (t
+                       ;; No changes, send a motion event.
+                       (i32store context buf 3) ; mouse-motion
+                       (i32store context (+ buf 4) (ldb (byte 32 0) (mezzano.gui.compositor:mouse-x-motion evt)))
+                       (i32store context (+ buf 8) (ldb (byte 32 0) (mezzano.gui.compositor:mouse-y-motion evt)))))
+                (return 1))
+            (mezzano.gui.widgets:close-button-clicked ()
+              (i32store context buf 0) ; quit
+              (return 1))))
+         (mezzano.gui.compositor:key-event
+          (i32store context
+                    buf
+                    (if (mezzano.gui.compositor:key-releasep evt)
+                         2 ; key-up
+                         1)) ; key-down
+          (i32store context (+ buf 4) (char-code (mezzano.gui.compositor:key-scancode evt)))
+          (i32store context (+ buf 8) 0) ;; FIXME
+          (i32store context (+ buf 12)
+                    (translate-sdl-keysym (mezzano.gui.compositor:key-key evt)
+                                          (mezzano.gui.compositor:key-scancode evt)))
+          (return 1))
+         (mezzano.gui.compositor:window-activation-event
+          (setf (mezzano.gui.widgets:activep *graphics-frame*) (mezzano.gui.compositor:state evt))
+          (mezzano.gui.widgets:draw-frame *graphics-frame*)
+          (i32store context buf 6) ; Activation event
+          (i32store context
+                    (+ buf 4)
+                    (if (mezzano.gui.compositor:state evt)
+                        1
+                        0))
+          (i32store context (+ buf 8) #x7)))))) ; mouse, input, and active.
+
+(defun set-input-grab (grabp)
+  (multiple-value-bind (left right top bottom)
+      (mezzano.gui.widgets:frame-size *graphics-frame*)
+    (declare (ignore right bottom))
+    ;; Clamp the grab region to the interior of the frame, not the whole window.
+    (mezzano.gui.compositor:grab-cursor *graphics-window* grabp
+                                        left top
+                                        *graphics-width* *graphics-height*)))
+
+(defun |_iota_grab_input| (context mode)
+  (declare (ignore context))
+  (set-input-grab (not (zerop mode)))
+  mode)
+
+(defun |_iota_warp_cursor| (context x y)
+  (declare (ignore context x y))
+  )
+
+(defun |_iota_show_cursor| (context toggle)
+  (declare (ignore context))
+  (set-input-grab (zerop toggle))
+  (mezzano.gui.compositor:set-window-data
+   *graphics-window*
+   :cursor (if (not (eql toggle 0))
+               :default
+               :none)))
+
+(defun |_iota_set_caption| (context title icon)
+  (declare (ignore context icon))
+  (let ((title-text (read-c-string llvm-context title)))
+    (setf (mezzano.gui.widgets:frame-title *graphics-frame*) title-text)
+    (mezzano.gui.widgets:draw-frame *graphics-frame*)
+    (mezzano.gui.compositor:set-window-data *graphics-window* :title title-text)))
+
+(defun |_iota_audio_init| (context freq format channels samples size)
+  (declare (ignore context freq format channels samples size))
+  0)
+
+(defun |_iota_audio_request| (context)
+  (declare (ignore context))
+  0)
+
+(defun |_iota_audio_push| (context stream len)
+  (declare (ignore context stream len))
+  nil)
+
+(defun |_iota_audio_quit| (context)
+  (declare (ignore context))
+  nil)
