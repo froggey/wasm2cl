@@ -1714,4 +1714,300 @@ mod tests {
         let err = err_message(run(&module, &func, &[], &code));
         assert!(err.contains("unsupported operator"), "{err}");
     }
+
+    #[test]
+    fn unreachable_nested_block_swallowed() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // unreachable; block (empty); i32.const 1; end; end
+        let code = [0x00, 0x02, 0x40, 0x41, 0x01, 0x0b, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Prim(Unreachable, [])]");
+    }
+
+    #[test]
+    fn unreachable_if_else_swallowed() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // unreachable; if (empty); i32.const 1; else; i32.const 2; end; end; end
+        let code = [
+            0x00, 0x04, 0x40, 0x41, 0x01, 0x05, 0x41, 0x02, 0x0b, 0x0b, 0x0b,
+        ];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Prim(Unreachable, [])]");
+    }
+
+    #[test]
+    fn targeted_block_becomes_reachable() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // block (empty); br 0; end; i32.const 2; end
+        let code = [0x02, 0x40, 0x0c, 0x00, 0x0b, 0x41, 0x02, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Block(\"block-0\", Progn([ReturnFrom(\"block-0\", Progn([]))])), Const(\"2\")]"
+        );
+    }
+
+    #[test]
+    fn loop_back_edge_stays_unreachable() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // unreachable; loop (empty); br 0; end; end
+        let code = [0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Prim(Unreachable, [])]");
+    }
+
+    #[test]
+    fn br_if_carries_block_value() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // block (i32); i32.const 5; i32.const 1; br_if 0; i32.const 5; end; end
+        let code = [
+            0x02, 0x7f, 0x41, 0x05, 0x41, 0x01, 0x0d, 0x00, 0x41, 0x05, 0x0b, 0x0b,
+        ];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Block(\"block-0\", Progn([If(Const(\"1\"), ReturnFrom(\"block-0\", \
+             Const(\"5\")), Progn([])), Const(\"5\")]))]"
+        );
+    }
+
+    #[test]
+    fn br_table_multi_target_switch() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // block (empty); block (empty); i32.const 0; br_table 0 1; end; end; end
+        let code = [
+            0x02, 0x40, 0x02, 0x40, 0x41, 0x00, 0x0e, 0x01, 0x00, 0x01, 0x0b, 0x0b, 0x0b,
+        ];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Block(\"block-0\", Progn([Block(\"block-1\", \
+             Progn([Switch(Const(\"0\"), ReturnFrom(\"block-0\", Progn([])), \
+             [ReturnFrom(\"block-1\", Progn([]))])]))]))]"
+        );
+    }
+
+    #[test]
+    fn br_to_value_block_bails() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // block (i32); i32.const 1; br 0; end; end
+        let code = [0x02, 0x7f, 0x41, 0x01, 0x0c, 0x00, 0x0b, 0x0b];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(err.contains("value-typed non-loop block"), "{err}");
+    }
+
+    #[test]
+    fn try_catch_emits_try() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // try (empty); i32.const 1; throw 0; catch 0; drop; end; i32.const 9; end
+        let code = [
+            0x06, 0x40, 0x41, 0x01, 0x08, 0x00, 0x07, 0x00, 0x1a, 0x0b, 0x41, 0x09, 0x0b,
+        ];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Try { name: \"try-0\", body: Throw(0, [Const(\"1\")]), handlers: \
+             [CatchHandler { tag: Some(0), vars: [\"try-0-exn-0\"], exnref_var: None, \
+             body: Local(\"try-0-exn-0\") }] }, Const(\"9\")]"
+        );
+    }
+
+    #[test]
+    fn try_catch_all_emits_try() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // try (empty); throw 0; catch_all; end; i32.const 9; end
+        let code = [0x06, 0x40, 0x08, 0x00, 0x19, 0x0b, 0x41, 0x09, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Try { name: \"try-0\", body: Throw(0, []), handlers: [CatchHandler { tag: None, \
+             vars: [], exnref_var: None, body: Progn([]) }] }, Const(\"9\")]"
+        );
+    }
+
+    #[test]
+    fn try_delegate_emits_progn() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // try (empty); throw 0; delegate 0; end
+        let code = [0x06, 0x40, 0x08, 0x00, 0x18, 0x00, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(format!("{exprs:?}"), "[Progn([Throw(0, [])])]");
+    }
+
+    #[test]
+    fn else_resets_unreachability() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // i32.const 1; if (i32); unreachable; else; i32.const 2; end; end
+        let code = [0x41, 0x01, 0x04, 0x7f, 0x00, 0x05, 0x41, 0x02, 0x0b, 0x0b];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[If(Const(\"1\"), Prim(Unreachable, []), Const(\"2\"))]"
+        );
+    }
+
+    #[test]
+    fn try_handler_end_becomes_reachable() {
+        let module = module_with(
+            vec![],
+            vec![FuncType {
+                params: vec![Type::I32],
+                results: vec![],
+            }],
+            vec![],
+        );
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![Type::I32],
+            },
+        );
+        // try (empty); i32.const 1; throw 0; catch 0; drop; unreachable; end;
+        // i32.const 9; end
+        let code = [
+            0x06, 0x40, 0x41, 0x01, 0x08, 0x00, 0x07, 0x00, 0x1a, 0x00, 0x0b, 0x41, 0x09, 0x0b,
+        ];
+        let exprs = run(&module, &func, &[], &code).unwrap();
+        assert_eq!(
+            format!("{exprs:?}"),
+            "[Try { name: \"try-0\", body: Throw(0, [Const(\"1\")]), handlers: \
+             [CatchHandler { tag: Some(0), vars: [\"try-0-exn-0\"], exnref_var: None, \
+             body: Progn([Local(\"try-0-exn-0\"), Prim(Unreachable, [])]) }] }, \
+             Const(\"9\")]"
+        );
+    }
+
+    #[test]
+    fn function_end_stack_not_empty_bails() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // i32.const 1; end
+        let code = [0x41, 0x01, 0x0b];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(
+            err.contains("stack not empty at end of function body"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn block_end_stack_not_empty_bails() {
+        let module = module_with(vec![], vec![], vec![]);
+        let func = function(
+            0,
+            FuncType {
+                params: vec![],
+                results: vec![],
+            },
+        );
+        // block (empty); i32.const 1; end; end
+        let code = [0x02, 0x40, 0x41, 0x01, 0x0b, 0x0b];
+        let err = err_message(run(&module, &func, &[], &code));
+        assert!(err.contains("stack not empty at block `end`"), "{err}");
+    }
 }
