@@ -256,128 +256,47 @@ fn convert_expr(expr: &Expr, indent: usize) -> String {
             result.push_str("))");
             result
         }
-        I32Load(info, addr, addend) => {
+        Load {
+            ty,
+            ext,
+            addr,
+            offset,
+        } => {
             let mut result = String::new();
-            result.push_str("(i32load");
-            if let Some((width, signed)) = info {
-                result.push_str(&format!("{}{}", width, if *signed { 's' } else { 'u' }));
+            result.push_str(&format!("({}load", convert_type(*ty)));
+            if let Some((width, signed)) = ext {
+                result.push_str(&format!("{width}{}", if *signed { 's' } else { 'u' }));
             }
             result.push_str(" context ");
-            if *addend == 0 {
+            if *offset == 0 {
                 result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
                 result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
+                result.push_str(&format!(" {offset})"));
             }
             result.push(')');
             result
         }
-        I32Store(info, addr, value, addend) => {
+        Store {
+            ty,
+            width,
+            addr,
+            value,
+            offset,
+        } => {
             let mut result = String::new();
-            result.push_str("(i32store");
-            if let Some(width) = info {
+            result.push_str(&format!("({}store", convert_type(*ty)));
+            if let Some(width) = width {
                 result.push_str(&format!("{width}"));
             }
             result.push_str(" context ");
-            if *addend == 0 {
+            if *offset == 0 {
                 result.push_str(&convert_expr(addr, indent + 4));
             } else {
                 result.push_str("(i32add ");
                 result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(' ');
-            result.push_str(&convert_expr(value, indent + 4));
-            result.push(')');
-            result
-        }
-        I64Load(info, addr, addend) => {
-            let mut result = String::new();
-            result.push_str("(i64load");
-            if let Some((width, signed)) = info {
-                result.push_str(&format!("{}{}", width, if *signed { 's' } else { 'u' }));
-            }
-            result.push_str(" context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(')');
-            result
-        }
-        I64Store(info, addr, value, addend) => {
-            let mut result = String::new();
-            result.push_str("(i64store");
-            if let Some(width) = info {
-                result.push_str(&format!("{width}"));
-            }
-            result.push_str(" context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(' ');
-            result.push_str(&convert_expr(value, indent + 4));
-            result.push(')');
-            result
-        }
-        F32Load(addr, addend) => {
-            let mut result = String::new();
-            result.push_str("(f32load context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(')');
-            result
-        }
-        F32Store(addr, value, addend) => {
-            let mut result = String::new();
-            result.push_str("(f32store context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(' ');
-            result.push_str(&convert_expr(value, indent + 4));
-            result.push(')');
-            result
-        }
-        F64Load(addr, addend) => {
-            let mut result = String::new();
-            result.push_str("(f64load context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
-            }
-            result.push(')');
-            result
-        }
-        F64Store(addr, value, addend) => {
-            let mut result = String::new();
-            result.push_str("(f64store context ");
-            if *addend == 0 {
-                result.push_str(&convert_expr(addr, indent + 4));
-            } else {
-                result.push_str("(i32add ");
-                result.push_str(&convert_expr(addr, indent + 4));
-                result.push_str(&format!(" {addend})"));
+                result.push_str(&format!(" {offset})"));
             }
             result.push(' ');
             result.push_str(&convert_expr(value, indent + 4));

@@ -1,5 +1,7 @@
 //! The expression IR.
 
+use crate::module::Type;
+
 #[derive(Debug)]
 pub enum Primitive {
     Unreachable,
@@ -160,14 +162,19 @@ pub enum Expr {
     Tagbody(String, Box<Expr>),
     Go(String),
     Switch(Box<Expr>, Box<Expr>, Vec<Expr>),
-    I32Load(Option<(usize, bool)>, Box<Expr>, usize),
-    I32Store(Option<usize>, Box<Expr>, Box<Expr>, usize),
-    I64Load(Option<(usize, bool)>, Box<Expr>, usize),
-    I64Store(Option<usize>, Box<Expr>, Box<Expr>, usize),
-    F32Load(Box<Expr>, usize),
-    F32Store(Box<Expr>, Box<Expr>, usize),
-    F64Load(Box<Expr>, usize),
-    F64Store(Box<Expr>, Box<Expr>, usize),
+    Load {
+        ty: Type,
+        ext: Option<(usize, bool)>,
+        addr: Box<Expr>,
+        offset: usize,
+    },
+    Store {
+        ty: Type,
+        width: Option<usize>,
+        addr: Box<Expr>,
+        value: Box<Expr>,
+        offset: usize,
+    },
     Try {
         name: String,
         body: Box<Expr>,

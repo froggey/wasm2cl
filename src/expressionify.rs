@@ -193,10 +193,6 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 Throw { tag_index } => self.throw_op(tag_index),
                 Rethrow { relative_depth } => self.rethrow_op(relative_depth)?,
                 ThrowRef => self.throw_ref_op(),
-                I32Const { value } => self.i32_const_op(value),
-                I64Const { value } => self.i64_const_op(value),
-                F32Const { value } => self.f32_const_op(value),
-                F64Const { value } => self.f64_const_op(value),
                 GlobalGet { global_index } => self.global_get_op(global_index),
                 GlobalSet { global_index } => self.global_set_op(global_index),
                 LocalGet { local_index } => self.local_get_op(local_index),
@@ -219,14 +215,15 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 MemorySize { mem } => self.memory_size_op(mem)?,
                 MemoryGrow { mem } => self.memory_grow_op(mem)?,
                 /* I32 */
-                I32Load { memarg } => self.i32_load_op(None, memarg),
-                I32Load8U { memarg } => self.i32_load_op(Some((8, false)), memarg),
-                I32Load8S { memarg } => self.i32_load_op(Some((8, true)), memarg),
-                I32Load16U { memarg } => self.i32_load_op(Some((16, false)), memarg),
-                I32Load16S { memarg } => self.i32_load_op(Some((16, true)), memarg),
-                I32Store { memarg } => self.i32_store_op(None, memarg),
-                I32Store8 { memarg } => self.i32_store_op(Some(8), memarg),
-                I32Store16 { memarg } => self.i32_store_op(Some(16), memarg),
+                I32Const { value } => self.i32_const_op(value),
+                I32Load { memarg } => self.load_op(Type::I32, None, memarg),
+                I32Load8U { memarg } => self.load_op(Type::I32, Some((8, false)), memarg),
+                I32Load8S { memarg } => self.load_op(Type::I32, Some((8, true)), memarg),
+                I32Load16U { memarg } => self.load_op(Type::I32, Some((16, false)), memarg),
+                I32Load16S { memarg } => self.load_op(Type::I32, Some((16, true)), memarg),
+                I32Store { memarg } => self.store_op(Type::I32, None, memarg),
+                I32Store8 { memarg } => self.store_op(Type::I32, Some(8), memarg),
+                I32Store16 { memarg } => self.store_op(Type::I32, Some(16), memarg),
                 I32Eqz => self.prim_op1(Primitive::I32Eqz),
                 I32Eq => self.prim_op2(Primitive::I32Eq),
                 I32Ne => self.prim_op2(Primitive::I32Ne),
@@ -269,17 +266,18 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 I32TruncSatF64S => self.prim_op1(Primitive::I32TruncSatF64S),
                 I32ReinterpretF32 => self.prim_op1(Primitive::I32ReinterpretF32),
                 /* I64 */
-                I64Load { memarg } => self.i64_load_op(None, memarg),
-                I64Load8U { memarg } => self.i64_load_op(Some((8, false)), memarg),
-                I64Load8S { memarg } => self.i64_load_op(Some((8, true)), memarg),
-                I64Load16U { memarg } => self.i64_load_op(Some((16, false)), memarg),
-                I64Load16S { memarg } => self.i64_load_op(Some((16, true)), memarg),
-                I64Load32U { memarg } => self.i64_load_op(Some((32, false)), memarg),
-                I64Load32S { memarg } => self.i64_load_op(Some((32, true)), memarg),
-                I64Store { memarg } => self.i64_store_op(None, memarg),
-                I64Store8 { memarg } => self.i64_store_op(Some(8), memarg),
-                I64Store16 { memarg } => self.i64_store_op(Some(16), memarg),
-                I64Store32 { memarg } => self.i64_store_op(Some(32), memarg),
+                I64Const { value } => self.i64_const_op(value),
+                I64Load { memarg } => self.load_op(Type::I64, None, memarg),
+                I64Load8U { memarg } => self.load_op(Type::I64, Some((8, false)), memarg),
+                I64Load8S { memarg } => self.load_op(Type::I64, Some((8, true)), memarg),
+                I64Load16U { memarg } => self.load_op(Type::I64, Some((16, false)), memarg),
+                I64Load16S { memarg } => self.load_op(Type::I64, Some((16, true)), memarg),
+                I64Load32U { memarg } => self.load_op(Type::I64, Some((32, false)), memarg),
+                I64Load32S { memarg } => self.load_op(Type::I64, Some((32, true)), memarg),
+                I64Store { memarg } => self.store_op(Type::I64, None, memarg),
+                I64Store8 { memarg } => self.store_op(Type::I64, Some(8), memarg),
+                I64Store16 { memarg } => self.store_op(Type::I64, Some(16), memarg),
+                I64Store32 { memarg } => self.store_op(Type::I64, Some(32), memarg),
                 I64Eqz => self.prim_op1(Primitive::I64Eqz),
                 I64Eq => self.prim_op2(Primitive::I64Eq),
                 I64Ne => self.prim_op2(Primitive::I64Ne),
@@ -324,8 +322,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 I64TruncSatF64S => self.prim_op1(Primitive::I64TruncSatF64S),
                 I64ReinterpretF64 => self.prim_op1(Primitive::I64ReinterpretF64),
                 /* F32 */
-                F32Load { memarg } => self.f32_load_op(memarg),
-                F32Store { memarg } => self.f32_store_op(memarg),
+                F32Const { value } => self.f32_const_op(value),
+                F32Load { memarg } => self.load_op(Type::F32, None, memarg),
+                F32Store { memarg } => self.store_op(Type::F32, None, memarg),
                 F32Eq => self.prim_op2(Primitive::F32Eq),
                 F32Ne => self.prim_op2(Primitive::F32Ne),
                 F32Le => self.prim_op2(Primitive::F32Le),
@@ -353,8 +352,9 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
                 F32ReinterpretI32 => self.prim_op1(Primitive::F32ReinterpretI32),
                 F32DemoteF64 => self.prim_op1(Primitive::F32DemoteF64),
                 /* F64 */
-                F64Load { memarg } => self.f64_load_op(memarg),
-                F64Store { memarg } => self.f64_store_op(memarg),
+                F64Const { value } => self.f64_const_op(value),
+                F64Load { memarg } => self.load_op(Type::F64, None, memarg),
+                F64Store { memarg } => self.store_op(Type::F64, None, memarg),
                 F64Eq => self.prim_op2(Primitive::F64Eq),
                 F64Ne => self.prim_op2(Primitive::F64Ne),
                 F64Le => self.prim_op2(Primitive::F64Le),
@@ -1049,70 +1049,26 @@ impl<'m, 'o, 'r> Ctx<'m, 'o, 'r> {
         Ok(())
     }
 
-    fn i32_load_op(&mut self, ext: Option<(usize, bool)>, memarg: wasmparser::MemArg) {
+    fn load_op(&mut self, ty: Type, ext: Option<(usize, bool)>, memarg: wasmparser::MemArg) {
         let addr = self.pop1();
-        self.stack
-            .push(Expr::I32Load(ext, Box::new(addr), memarg.offset as usize));
+        self.stack.push(Expr::Load {
+            ty,
+            ext,
+            addr: Box::new(addr),
+            offset: memarg.offset as usize,
+        });
     }
 
-    fn i32_store_op(&mut self, width: Option<usize>, memarg: wasmparser::MemArg) {
+    fn store_op(&mut self, ty: Type, width: Option<usize>, memarg: wasmparser::MemArg) {
         let value = self.pop1();
         let addr = self.pop1();
-        self.append_side_effect(Expr::I32Store(
+        self.append_side_effect(Expr::Store {
+            ty,
             width,
-            Box::new(addr),
-            Box::new(value),
-            memarg.offset as usize,
-        ));
-    }
-
-    fn i64_load_op(&mut self, ext: Option<(usize, bool)>, memarg: wasmparser::MemArg) {
-        let addr = self.pop1();
-        self.stack
-            .push(Expr::I64Load(ext, Box::new(addr), memarg.offset as usize));
-    }
-
-    fn i64_store_op(&mut self, width: Option<usize>, memarg: wasmparser::MemArg) {
-        let value = self.pop1();
-        let addr = self.pop1();
-        self.append_side_effect(Expr::I64Store(
-            width,
-            Box::new(addr),
-            Box::new(value),
-            memarg.offset as usize,
-        ));
-    }
-
-    fn f32_load_op(&mut self, memarg: wasmparser::MemArg) {
-        let addr = self.pop1();
-        self.stack
-            .push(Expr::F32Load(Box::new(addr), memarg.offset as usize));
-    }
-
-    fn f32_store_op(&mut self, memarg: wasmparser::MemArg) {
-        let value = self.pop1();
-        let addr = self.pop1();
-        self.append_side_effect(Expr::F32Store(
-            Box::new(addr),
-            Box::new(value),
-            memarg.offset as usize,
-        ));
-    }
-
-    fn f64_load_op(&mut self, memarg: wasmparser::MemArg) {
-        let addr = self.pop1();
-        self.stack
-            .push(Expr::F64Load(Box::new(addr), memarg.offset as usize));
-    }
-
-    fn f64_store_op(&mut self, memarg: wasmparser::MemArg) {
-        let value = self.pop1();
-        let addr = self.pop1();
-        self.append_side_effect(Expr::F64Store(
-            Box::new(addr),
-            Box::new(value),
-            memarg.offset as usize,
-        ));
+            addr: Box::new(addr),
+            value: Box::new(value),
+            offset: memarg.offset as usize,
+        });
     }
 }
 
