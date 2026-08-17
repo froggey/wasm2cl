@@ -574,46 +574,24 @@ void I_InitSound(void)
 
 #ifdef HAVE_MIXER
 #include "SDL_mixer.h"
+#include "SDL_rwops.h"
 #include "mmus2mid.h"
 
 static Mix_Music *music[2] = { NULL, NULL };
-
-char* music_tmp = NULL; /* cph - name of music temporary file */
 
 #endif
 
 void I_ShutdownMusic(void)
 {
-#ifdef HAVE_MIXER
-  if (music_tmp) {
-    unlink(music_tmp);
-    lprintf(LO_DEBUG, "I_ShutdownMusic: removing %s\n", music_tmp);
-    free(music_tmp);
-	music_tmp = NULL;
-  }
-#endif
 }
 
 void I_InitMusic(void)
 {
-#ifdef HAVE_MIXER
-  if (!music_tmp) {
-#ifndef _WIN32
-    music_tmp = strdup("/tmp/prboom-music-XXXXXX");
-    {
-      int fd = mkstemp(music_tmp);
-      if (fd<0) {
-        lprintf(LO_ERROR, "I_InitMusic: failed to create music temp file %s", music_tmp);
-        free(music_tmp); return;
-      } else 
-        close(fd);
-    }
-#else /* !_WIN32 */
-    music_tmp = strdup("doom.tmp");
-#endif
+  static boolean music_inited = false;
+  if (!music_inited) {
     atexit(I_ShutdownMusic);
+    music_inited = true;
   }
-#endif
 }
 
 void I_PlaySong(int handle, int looping)
@@ -678,38 +656,33 @@ int I_RegisterSong(const void *data, size_t len)
 {
 #ifdef HAVE_MIXER
   MIDI *mididata;
-  FILE *midfile;
 
   if ( len < 32 )
     return 0; // the data should at least as big as the MUS header
-  if ( music_tmp == NULL )
-    return 0;
-  midfile = fopen(music_tmp, "wb");
-  if ( midfile == NULL ) {
-    lprintf(LO_ERROR,"Couldn't write MIDI to %s\n", music_tmp);
-    return 0;
-  }
+
   /* Convert MUS chunk to MIDI? */
   if ( memcmp(data, "MUS", 3) == 0 )
   {
     UBYTE *mid;
     int midlen;
+    SDL_RWops *rw;
 
     mididata = malloc(sizeof(MIDI));
     mmus2mid(data, mididata, 89, 0);
     MIDIToMidi(mididata,&mid,&midlen);
-    M_WriteFile(music_tmp,mid,midlen);
-    free(mid);
     free_mididata(mididata);
     free(mididata);
+    rw = SDL_RWFromMem(mid, midlen);
+    music[0] = Mix_LoadMUS_RW(rw);
+    SDL_RWclose(rw);
+    free(mid);
   } else {
-    fwrite(data, len, 1, midfile);
+    SDL_RWops *rw = SDL_RWFromMem((void *)data, len);
+    music[0] = Mix_LoadMUS_RW(rw);
+    SDL_RWclose(rw);
   }
-  fclose(midfile);
-
-  music[0] = Mix_LoadMUS(music_tmp);
   if ( music[0] == NULL ) {
-    lprintf(LO_ERROR,"Couldn't load MIDI from %s: %s\n", music_tmp, Mix_GetError());
+    lprintf(LO_ERROR,"Couldn't load MIDI: %s\n", Mix_GetError());
   }
 #endif
   return (0);
