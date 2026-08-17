@@ -85,7 +85,6 @@
          1)))
 
 (defun |_iota_video_update| (context buf)
-  (declare (ignore context))
   (declare (optimize (speed 3) (safety 0))
            (type (unsigned-byte 32) buf))
   (when (not (zerop buf))
@@ -257,8 +256,8 @@
                :none)))
 
 (defun |_iota_set_caption| (context title icon)
-  (declare (ignore context icon))
-  (let ((title-text (read-c-string llvm-context title)))
+  (declare (ignore icon))
+  (let ((title-text (read-c-string context title)))
     (setf (mezzano.gui.widgets:frame-title *graphics-frame*) title-text)
     (mezzano.gui.widgets:draw-frame *graphics-frame*)
     (mezzano.gui.compositor:set-window-data *graphics-window* :title title-text)))
