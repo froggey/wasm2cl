@@ -271,7 +271,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
              (funcall entry context)))
       (drop-personality personality))))
 
-(defun run (package-designator &rest args)
+(defun make-default-personality (package-designator args)
   (let* ((fd-table (make-array 4
                                :initial-contents (list nil ;; stdin
                                                        ;; stdout
@@ -282,14 +282,17 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
                                                                       :real-path (namestring *default-pathname-defaults*)
                                                                       :path "/"))
                                :adjustable t
-                               :fill-pointer t))
-         (personality (make-instance 'wasip1-personality
-                                     :args (list* (if (packagep package-designator)
-                                                      (package-name package-designator)
-                                                      (string package-designator))
-                                                  args)
-                                     :env '()
-                                     :fd-table fd-table)))
+                               :fill-pointer t)))
+    (make-instance 'wasip1-personality
+                   :args (list* (if (packagep package-designator)
+                                    (package-name package-designator)
+                                    (string package-designator))
+                                args)
+                   :env '()
+                   :fd-table fd-table)))
+
+(defun run (package-designator &rest args)
+  (let ((personality (make-default-personality package-designator args)))
     (run-1 package-designator personality)))
 
 (defun |args_sizes_get| (context argc-out-ptr buf-size-out-ptr)

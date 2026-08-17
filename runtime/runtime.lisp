@@ -190,13 +190,17 @@
 
 (defmacro define-wasm-function (name args return-type &body body)
   (declare (ignore return-type))
-  `(defun ,name (context . ,(loop for (a) in args collect a))
-     (declare (type wasm-context context)
-              (ignorable context ,@(loop for (a) in args collect a))
-              ,@(loop for (a ty) in args
-                      collect `(type ,ty ,a)))
-     (block nil
-       ,@body)))
+  (multiple-value-bind (body decls doc)
+      (alexandria:parse-body body :documentation t)
+    `(defun ,name (context . ,(loop for (a) in args collect a))
+       (declare (type wasm-context context)
+                (ignorable context ,@(loop for (a) in args collect a))
+                ,@(loop for (a ty) in args
+                        collect `(type ,ty ,a)))
+       ,@decls
+       ,@(when doc (list doc))
+       (block nil
+         ,@body))))
 
 (defmacro define-wasm-import (local-name arg-types return-type module name)
   (declare (ignore return-type))

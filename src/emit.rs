@@ -410,7 +410,7 @@ fn convert_parameters(params: &[Type]) -> String {
     output
 }
 
-fn convert_function(module: &Module, func: &Function) -> Result<String> {
+fn convert_function(module: &Module, func: &Function, addtional_declares: Option<&str>) -> Result<String> {
     let Some(body) = func.body.as_ref() else {
         let (module, name) = func.name.as_ref().unwrap();
         return Ok(format!(
@@ -466,6 +466,9 @@ fn convert_function(module: &Module, func: &Function) -> Result<String> {
             result
         }
     ));
+    if let Some(extra_declares) = addtional_declares {
+        output.push_str(&format!("  (declare {extra_declares})\n"));
+    }
     // Local variable bindings.
     // TODO: Type declarations.
     output.push_str("  (let (");
@@ -663,6 +666,7 @@ pub fn emit_functions(
     package: &str,
     path: &Path,
     functions_per_file: usize,
+    addtional_declares: Option<&str>,
 ) -> Result<()> {
     use std::io::Write;
 
@@ -674,7 +678,7 @@ pub fn emit_functions(
         writeln!(&mut out)?;
 
         for f in fns {
-            writeln!(&mut out, "{}", convert_function(module, f)?)?;
+            writeln!(&mut out, "{}", convert_function(module, f, addtional_declares)?)?;
             writeln!(&mut out)?;
         }
         out.flush()?;
