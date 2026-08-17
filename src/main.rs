@@ -38,7 +38,13 @@ fn main() -> Result<()> {
 
     emit::emit_system(&module, &cli.package, dir, cli.functions_per_file)?;
     emit::emit_main(&module, &cli.package, dir, cli.notinline)?;
-    emit::emit_functions(&module, &cli.package, dir, cli.functions_per_file, cli.additional_declares.as_deref())?;
+    emit::emit_functions(
+        &module,
+        &cli.package,
+        dir,
+        cli.functions_per_file,
+        cli.additional_declares.as_deref(),
+    )?;
 
     //fs::write(&cli.output, emit(&module, &cli.package)?)?;
 

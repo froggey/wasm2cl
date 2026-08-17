@@ -410,7 +410,11 @@ fn convert_parameters(params: &[Type]) -> String {
     output
 }
 
-fn convert_function(module: &Module, func: &Function, addtional_declares: Option<&str>) -> Result<String> {
+fn convert_function(
+    module: &Module,
+    func: &Function,
+    addtional_declares: Option<&str>,
+) -> Result<String> {
     let Some(body) = func.body.as_ref() else {
         let (module, name) = func.name.as_ref().unwrap();
         return Ok(format!(
@@ -678,7 +682,11 @@ pub fn emit_functions(
         writeln!(&mut out)?;
 
         for f in fns {
-            writeln!(&mut out, "{}", convert_function(module, f, addtional_declares)?)?;
+            writeln!(
+                &mut out,
+                "{}",
+                convert_function(module, f, addtional_declares)?
+            )?;
             writeln!(&mut out)?;
         }
         out.flush()?;
