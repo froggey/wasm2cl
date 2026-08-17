@@ -296,6 +296,7 @@ case $basic_machine in
 	| spu | strongarm \
 	| tahoe | thumb | tic4x | tic80 | tron \
 	| v850 | v850e \
+	| wasm32 \
 	| we32k \
 	| x86 | xc16x | xscale | xscalee[bl] | xstormy16 | xtensa \
 	| z8k | z80)
@@ -1297,7 +1298,7 @@ case $os in
 	      | -os2* | -vos* | -palmos* | -uclinux* | -nucleus* \
 	      | -morphos* | -superux* | -rtmk* | -rtmk-nova* | -windiss* \
 	      | -powermax* | -dnix* | -nx6 | -nx7 | -sei* | -dragonfly* \
-	      | -skyos* | -haiku* | -rdos* | -toppers* | -drops* | -es*)
+	      | -skyos* | -haiku* | -rdos* | -toppers* | -drops* | -es* | -wasip1*)
 	# Remember, each alternative MUST END IN *, to match a version number.
 		;;
 	-qnx*)
