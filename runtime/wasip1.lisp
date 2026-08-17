@@ -368,7 +368,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
            ;; fs_rights_base
            (i64store context (+ statbuf 8) #xFFFFFFFFFFFFFFFF)
            ;; fs_rights_inheriting
-           (i64store context (+ statbuf 8) #xFFFFFFFFFFFFFFFF)
+           (i64store context (+ statbuf 16) #xFFFFFFFFFFFFFFFF)
            +success+)
           (t
            +err-badf+))))
