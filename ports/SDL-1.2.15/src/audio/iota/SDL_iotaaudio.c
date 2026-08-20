@@ -43,6 +43,8 @@ IOTA_IMPORT(_iota_audio_push)    void _iota_audio_push(Uint8 *buf, int len);
 
 static int IOTAAUD_OpenAudio(_THIS, SDL_AudioSpec *spec);
 static void IOTAAUD_CloseAudio(_THIS);
+static void IOTA_LockAudio(_THIS);
+static void IOTA_UnlockAudio(_THIS);
 
 static int IOTAAUD_Available(void)
 {
@@ -78,6 +80,8 @@ static SDL_AudioDevice *IOTAAUD_CreateDevice(int devindex)
     /* Set the function pointers */
     device->OpenAudio = IOTAAUD_OpenAudio;
     device->CloseAudio = IOTAAUD_CloseAudio;
+    device->LockAudio   = IOTA_LockAudio;
+    device->UnlockAudio = IOTA_UnlockAudio;
 
     device->free = IOTAAUD_DeleteDevice;
 
@@ -145,6 +149,17 @@ int IOTAAUD_Pump(void)
         }
     }
     return(0);
+}
+
+static void IOTA_LockAudio(_THIS)
+{
+    /* noop */
+}
+
+static void IOTA_UnlockAudio(_THIS)
+{
+    /* Pump audio now, otherwise we get hangs in SDL_Mixer */
+    IOTAAUD_Pump();
 }
 
 /* end of SDL_iotaaudio.c ... */
