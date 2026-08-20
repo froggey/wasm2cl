@@ -259,7 +259,7 @@
   "Sign extend an value of the specified width."
   (if (logbitp (1- width) value)
       (logior (ash -1 (1- width)) value)
-      value))
+      (logand (1- (ash 1 width)) value)))
 
 (define-compiler-macro sign-extend (&whole whole value width)
   (declare (ignorable whole))
@@ -270,9 +270,9 @@
     ((integerp width)
      `(the (signed-byte ,width)
            (let ((value ,value))
-             (if (logbitp (1- ,width) value)
-                 (logior (ash -1 (1- ,width)) value)
-                 value))))
+             (if (logbitp ,(1- width) value)
+                 (logior ,(ash -1 (1- width)) value)
+                 (logand ,(1- (ash 1 width)) value)))))
     (t whole)))
 
 (declaim (inline select))
