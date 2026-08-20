@@ -29,7 +29,7 @@ Some window managers handle this badly and make it impossible to ungrab
 input from a frozen or otherwise uncooperative program.")
 
 (defparameter *enable-audio* t)
-(defparameter *audio-buffer-margin* 3
+(defparameter *audio-buffer-margin* 2
   "Keep at least this much audio buffered.
 However, large/more buffers = higher latency.")
 

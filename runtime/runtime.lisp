@@ -168,6 +168,24 @@
 
 (in-package :wasm2cl)
 
+;; Don't inline these, the expand into (if fixnum ...) which breaks the ub64 transform.
+;; Can't use notinline either because that disables transforms! Need a better way.
+#+mezzano
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (remhash 'mezzano.internals::binary-= mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-< mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-> mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-<= mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary->= mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.runtime::right-shift mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.runtime::left-shift mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-logand mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-logior mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-logxor mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-+ mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-- mezzano.internals::*symbol-function-info*)
+  (remhash 'mezzano.internals::binary-* mezzano.internals::*symbol-function-info*))
+
 (defconstant +wasm-page-size+ #x10000)
 
 (deftype i32 () `(unsigned-byte 32))

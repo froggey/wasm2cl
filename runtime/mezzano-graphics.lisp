@@ -29,15 +29,34 @@
 (defvar *graphics-window*)
 (defvar *graphics-frame*)
 
+(defparameter *audio-buffer-margin* 2)
+
+(defvar *audio-sink*)
+(defvar *audio-freq*)
+(defvar *audio-format*)
+(defvar *audio-channels*)
+(defvar *audio-samples*)
+(defvar *audio-size*)
+(defvar *audio-src-output*)
+
 (defun call-with-graphics-support (fn)
   (let ((*graphics-enabled* t)
         (*graphics-width* 0)
         (*graphics-height* 0)
         (*graphics-fifo* (mezzano.supervisor:make-fifo 50))
         (*graphics-window* nil)
-        (*graphics-frame* nil))
+        (*graphics-frame* nil)
+        (*audio-sink* nil)
+        (*audio-freq* 0)
+        (*audio-format* 0)
+        (*audio-channels* 0)
+        (*audio-samples* 0)
+        (*audio-size* 0)
+        (*audio-src-output* nil))
     (unwind-protect
          (funcall fn)
+      (when *audio-sink*
+        (mezzano.driver.sound:flush-sink *audio-sink*))
       (when *graphics-window*
         (mezzano.gui.compositor:close-window *graphics-window*)))))
 
@@ -262,18 +281,97 @@
     (mezzano.gui.widgets:draw-frame *graphics-frame*)
     (mezzano.gui.compositor:set-window-data *graphics-window* :title title-text)))
 
+(defconstant +output-audio-frequency+ 44100)
+
+(defun resample-buffer (input-rate output-rate input start end output)
+  "Sample-rate-convert stereo s16le PCM via linear interpolation.
+INPUT is a byte vector of interleaved s16le stereo samples.
+START and END are byte offsets (must be 4-byte aligned).
+OUTPUT is a pre-allocated byte vector for the result.
+Returns the number of bytes written to OUTPUT."
+  (let* ((ratio (/ input-rate output-rate))
+         (n-input-frames (/ (- end start) 4))
+         (n-output-frames (max 1 (round (* n-input-frames (/ output-rate input-rate))))))
+    (dotimes (i n-output-frames)
+      (let* ((pos (* i ratio))
+             (idx (floor pos))
+             (frac (- pos idx))
+             (off-in (+ start (* idx 4)))
+             (off-out (* i 4)))
+        (flet ((interp-channel (offset)
+                 (let* ((s0 (/ (mezzano.extensions:sb16ref/le input (+ off-in offset)) 32768.0))
+                        (s1 (if (< (+ idx 1) n-input-frames)
+                                (/ (mezzano.extensions:sb16ref/le input (+ off-in offset 4)) 32768.0)
+                                s0)))
+                   (+ (* s0 (- 1.0 frac)) (* s1 frac)))))
+          (setf (mezzano.extensions:sb16ref/le output off-out)
+                (round (* (interp-channel 0) 32768.0)))
+          (setf (mezzano.extensions:sb16ref/le output (+ off-out 2))
+                (round (* (interp-channel 2) 32768.0))))))
+    (* n-output-frames 4)))
+
+(defconstant +audio-s16le+ #x8010)
+
 (defun |_iota_audio_init| (context freq format channels samples size)
-  (declare (ignore context freq format channels samples size))
+  (declare (ignore context))
+  (when (/= format +audio-s16le+)
+    (format t "~&[iota-audio] unsupported format #x~X~%" format)
+    (return-from |_iota_audio_init| 1))
+  (when (/= channels 2)
+    (format t "~&[iota-audio] unsupported channel count ~A~%" channels)
+    (return-from |_iota_audio_init| 1))
+  (setf *audio-freq* freq
+        *audio-format* format
+        *audio-channels* channels
+        *audio-samples* samples
+        *audio-size* size)
+  (handler-case
+      (setf *audio-sink*
+            (mezzano.driver.sound:make-sound-output-sink
+             :buffer-duration 0.1
+             :format :pcm-s16le))
+    (error (c)
+      (format t "~&[iota-audio] failed to create sink: ~A~%" c)
+      (setf *audio-sink* nil)
+      (return-from |_iota_audio_init| 1)))
+  (setf *audio-src-output* (make-array (* size (ceiling +output-audio-frequency+ freq))
+                                       :element-type '(unsigned-byte 8)))
   0)
 
 (defun |_iota_audio_request| (context)
   (declare (ignore context))
-  0)
+  (if *audio-sink*
+      (let ((watermark (* *audio-buffer-margin* *audio-size*))
+            (buffered (/ (* (mezzano.driver.sound:sink-buffered-frames *audio-sink*)
+                            ;; bytes per sample
+                            2)
+                         ;; Since we're upscaling from 11khz to 44khz
+                         4)))
+        (max 0 (- watermark buffered)))
+      0))
 
 (defun |_iota_audio_push| (context stream len)
-  (declare (ignore context stream len))
+  (when (and *audio-sink* (plusp len))
+    (let ((memory (wasm-context-memory context))
+          (end (+ stream len)))
+      (declare (type (simple-array (unsigned-byte 8) (*)) memory))
+      (cond ((= *audio-freq* +output-audio-frequency+)
+             ;; Direct path, no resampling.
+             (mezzano.driver.sound:output-sound memory *audio-sink*
+                                                :start stream :end end))
+            (t
+             ;; Need to resample.
+             (let ((count (resample-buffer *audio-freq* +output-audio-frequency+ memory stream end *audio-src-output*)))
+               (mezzano.driver.sound:output-sound
+                *audio-src-output*
+                *audio-sink*
+                :end count))))))
   nil)
 
 (defun |_iota_audio_quit| (context)
   (declare (ignore context))
+  (when *audio-sink*
+    (mezzano.driver.sound:flush-sink *audio-sink*)
+    (setf *audio-sink* nil
+          *audio-src-output* nil))
   nil)
