@@ -29,7 +29,15 @@
 (defvar *graphics-window*)
 (defvar *graphics-frame*)
 
+(defconstant +output-audio-frequency+ 44100)
+
 (defparameter *audio-buffer-margin* 2)
+
+(defparameter *audio-sink-buffer-duration* 0.1)
+;; Capacity of the sound sink in host frames. Must match
+;; *audio-sink-buffer-duration*, which is what make-sound-output-sink
+;; uses to size its ring buffer.
+(defparameter *audio-sink-capacity* (truncate (* +output-audio-frequency+ *audio-sink-buffer-duration*)))
 
 (defvar *audio-sink*)
 (defvar *audio-freq*)
@@ -281,8 +289,6 @@
     (mezzano.gui.widgets:draw-frame *graphics-frame*)
     (mezzano.gui.compositor:set-window-data *graphics-window* :title title-text)))
 
-(defconstant +output-audio-frequency+ 44100)
-
 (defun resample-buffer (input-rate output-rate input start end output)
   "Sample-rate-convert stereo s16le PCM via linear interpolation.
 INPUT is a byte vector of interleaved s16le stereo samples.
@@ -327,9 +333,9 @@ Returns the number of bytes written to OUTPUT."
         *audio-size* size)
   (handler-case
       (setf *audio-sink*
-            (mezzano.driver.sound:make-sound-output-sink
-             :buffer-duration 0.1
-             :format :pcm-s16le))
+             (mezzano.driver.sound:make-sound-output-sink
+              :buffer-duration *audio-sink-buffer-duration*
+              :format :pcm-s16le))
     (error (c)
       (format t "~&[iota-audio] failed to create sink: ~A~%" c)
       (setf *audio-sink* nil)
@@ -340,15 +346,21 @@ Returns the number of bytes written to OUTPUT."
 
 (defun |_iota_audio_request| (context)
   (declare (ignore context))
-  (if *audio-sink*
-      (let ((watermark (* *audio-buffer-margin* *audio-size*))
-            (buffered (/ (* (mezzano.driver.sound:sink-buffered-frames *audio-sink*)
-                            ;; bytes per sample
-                            2)
-                         ;; Since we're upscaling from 11khz to 44khz
-                         4)))
-        (max 0 (- watermark buffered)))
-      0))
+  (when (not *audio-sink*)
+    (return-from |_iota_audio_request| 0))
+  (let* ((buffered-frames (mezzano.driver.sound:sink-buffered-frames *audio-sink*))
+         ;; A guest frame is 4 bytes and is stretched to
+         ;; +output-audio-frequency+/*audio-freq* host frames, so a host
+         ;; frame corresponds to (* 4 freq) / +output-audio-frequency+
+         ;; guest bytes.
+         (host-frame-in-guest-bytes (/ (* 4 *audio-freq*) +output-audio-frequency+))
+         ;; Backlog and free space, both in guest-rate byte units so
+         ;; they can be compared against *audio-size*.
+         (buffered (floor (* buffered-frames host-frame-in-guest-bytes)))
+         (free (floor (* (max 0 (- *audio-sink-capacity* buffered-frames))
+                         host-frame-in-guest-bytes))))
+    (min (max 0 (- (* *audio-buffer-margin* *audio-size*) buffered))
+         free)))
 
 (defun |_iota_audio_push| (context stream len)
   (when (and *audio-sink* (plusp len))
