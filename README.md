@@ -44,7 +44,24 @@ This produces a few wasm files that can be translated.
 Data files for prboom available in `ports/prboom-2.5.0/data/` (Doom 1 shareware WAD)
 Data files for sdlquake available in `ports/sdlquake-1.0.9/id1/` (Quake 1 shareware)
 
-## SBCL miscompilation on arm64 (updated 2026-8-9)
+### Doom example
+
+After building ports (see above), from the top-level directory
+
+```bash
+cargo run --release -- --additional-declares "(optimize speed (safety 0) (debug 0))" ports/sysroot/games/prboom prboom-sys
+cp -a ports/prboom-2.5.0/data prboom-sys/data
+cp -a ports/freepats/* prboom-sys/data/
+cp prboom-sys/data/freepats.cfg prboom-sys/data/timidity.cfg
+```
+
+```lisp
+(asdf:load-system :prboom-sys)
+(iota-sdl:call-with-graphics-support
+  (lambda () (wasm2cl-wasip1:run :prboom-sys)))
+```
+
+## SBCL miscompilation on arm64 (fixed in sbcl 2.6.8+)
 
 sdlquake triggers a miscompilation on arm64 related to specialized entry points.
 This can be worked around by passing the `--notinline` flag to `wasm2cl` to

@@ -13,7 +13,7 @@ TOOLDIR=$1
 CC=${TOOLDIR}/bin/clang
 AR=${TOOLDIR}/bin/llvm-ar
 RANLIB=${TOOLDIR}/bin/llvm-ranlib
-CFLAGS='-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_PROCESS_CLOCKS -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false -O2'
+CFLAGS='-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_PROCESS_CLOCKS -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false -O2 --no-wasm-opt'
 LDFLAGS='-Wl,-z,stack-size=4194304 -lwasi-emulated-signal -lwasi-emulated-getpid -lwasi-emulated-process-clocks -lsetjmp'
 
 export CC CFLAGS LDFLAGS LIBS AR RANLIB

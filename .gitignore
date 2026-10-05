@@ -1,6 +1,6 @@
 .DS_Store
 /target
 *.fasl
-out.lisp
+*.llf
 /ports/sysroot
 /ports/*-build

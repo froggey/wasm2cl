@@ -14,7 +14,7 @@ struct Cli {
     // and stop sbcl from using the specialized-xep mechanism.
     #[arg(long, default_value = "false")]
     notinline: bool,
-    #[arg(long, default_value = "None")]
+    #[arg(long)]
     additional_declares: Option<String>,
 }
 
