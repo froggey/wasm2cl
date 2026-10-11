@@ -495,7 +495,7 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
           (t
            +err-badf+))))
 
-(defun resolve-path (context dir-fd lookup-flags path-buf path-len)
+(defun resolve-path (context dir-fd lookup-flags path-buf path-len &key ensure-directory)
   (declare (ignore lookup-flags))
   (let ((dir (resolve-fd context dir-fd))
         (path (babel:octets-to-string (wasm-context-memory context)
@@ -503,7 +503,10 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
     (unless (typep dir 'preopened-path)
       ;; FIXME: Better error here.
       (return-from resolve-path nil))
-    (concatenate 'string (slot-value dir '%real-path) path)))
+    (uiop:parse-unix-namestring
+     path
+     :defaults (slot-value dir '%real-path)
+     :ensure-directory ensure-directory)))
 
 (defun |path_open| (context dir-fd lookup-flags path-buf path-len oflags fs-rights-base fs-rights-inheriting fdflags out-ptr)
   (declare (ignore fs-rights-inheriting))
@@ -570,10 +573,9 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
              +success+)))))
 
 (defun |path_create_directory| (context dir-fd path-buf path-len)
-  (let ((full-path (resolve-path context dir-fd 0 path-buf path-len)))
+  (let ((full-path (resolve-path context dir-fd 0 path-buf path-len :ensure-directory t)))
     (unless full-path
       (return-from |path_create_directory| +err-badf+))
-    (setf full-path (concatenate 'string full-path "/"))
     (if (nth-value 1 (ensure-directories-exist full-path))
         +success+
         +err-exist+)))
@@ -583,9 +585,10 @@ If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subs
   (throw 'exit code))
 
 (defun |clock_time_get| (context clockid precision time)
+  (declare (ignore clockid precision))
   (let* ((current-time (/ (get-internal-real-time)
-                          internal-time-units-per-second))
-         (time-ns (truncate (* current-time 1000000000))))
+                          (float internal-time-units-per-second 0.0d0)))
+         (time-ns (truncate (* current-time 1000000000.0d0))))
     (i64store context time (ldb (byte 64 0) time-ns))
     0))
 
