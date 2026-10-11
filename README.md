@@ -61,6 +61,21 @@ cp prboom-sys/data/freepats.cfg prboom-sys/data/timidity.cfg
   (lambda () (wasm2cl-wasip1:run :prboom-sys)))
 ```
 
+### Quake example
+
+After building ports (see above), from the top-level directory
+
+```bash
+cargo run --release -- --additional-declares "(optimize speed (safety 0) (debug 0))" ports/sysroot/bin/sdlquake sdlquake-sys
+cp -a ports/sdlquake-1.0.9/id1 sdlquake-sys/
+```
+
+```lisp
+(asdf:load-system :sdlquake-sys)
+(iota-sdl:call-with-graphics-support
+  (lambda () (wasm2cl-wasip1:run :sdlquake-sys)))
+```
+
 ## SBCL miscompilation on arm64 (fixed in sbcl 2.6.8+)
 
 sdlquake triggers a miscompilation on arm64 related to specialized entry points.

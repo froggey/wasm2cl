@@ -285,6 +285,9 @@
     #+sbcl
     ((member width '(8 16 32))
      `(sb-vm::sign-extend ,value ,width))
+    #+mezzano
+    (t
+     `(mezzano.extensions:sign-extend ,value ,width))
     ((integerp width)
      `(the (signed-byte ,width)
            (let ((value ,value))
@@ -293,16 +296,8 @@
                  (logand ,(1- (ash 1 width)) value)))))
     (t whole)))
 
-(declaim (inline select))
-(defun select (lhs rhs test)
-  (if test lhs rhs))
-
 (defun unreachable ()
   (error "Unreachable reached!"))
-
-(declaim (inline bool))
-(defun bool (value)
-  (if value 1 0))
 
 (defun memory-copy (context dst src n)
   (let ((memory (wasm-context-memory context)))
@@ -328,95 +323,108 @@
 (defun memory-size (context)
   (truncate (length (wasm-context-memory context)) +wasm-page-size+))
 
+(defmacro define-op (name lambda-list &body body)
+  `(progn
+     (declaim (inline ,name))
+     (defun ,name ,lambda-list ,@body)))
+
 (defmacro define-conditional (name args op)
   (let ((fused-name (intern (format nil "~A.FUSED" name)
                             (symbol-package name))))
     `(progn
-       (declaim (inline ,name ,fused-name))
-       (defun ,fused-name ,args ,op)
-       (defun ,name ,args (bool (,fused-name ,@args))))))
+       (define-op ,fused-name ,args ,op)
+       (define-op ,name ,args (bool (,fused-name ,@args))))))
 
 (defmacro define-integer-binop (name type signedp op)
   (let ((width (ecase type (i32 32) (i64 64))))
-    `(progn
-       (declaim (inline ,name))
-       (defun ,name (x y)
-         (ldb (byte ,width 0)
-              (,op ,(if signedp
-                        `(sign-extend (the ,type x) ,width)
-                        `(the ,type x))
-                   ,(if signedp
-                        `(sign-extend (the ,type y) ,width)
-                        `(the ,type y))))))))
+    `(define-op ,name (x y)
+       (ldb (byte ,width 0)
+            (,op ,(if signedp
+                      `(sign-extend (the ,type x) ,width)
+                      `(the ,type x))
+                 ,(if signedp
+                      `(sign-extend (the ,type y) ,width)
+                      `(the ,type y)))))))
 
 (defmacro define-float-binop (name type op)
-  `(progn
-     (declaim (inline ,name))
-     (defun ,name (x y)
-       (,op (the ,type x) (the ,type y)))))
+  `(define-op ,name (x y)
+     (,op (the ,type x) (the ,type y))))
 
 (defmacro define-float-unop (name type op)
-  `(progn
-     (declaim (inline ,name))
-     (defun ,name (x)
-       (,op (the ,type x)))))
+  `(define-op ,name (x)
+     (,op (the ,type x))))
 
-(defun i32load (context address)
+(define-op select (lhs rhs test)
+  (if test
+      lhs
+      rhs))
+
+(define-op bool (value)
+  (if value 1 0))
+
+(define-op i32load (context address)
   (nibbles:ub32ref/le (wasm-context-memory context) address))
 
-(defun i32load8u (context address)
+(define-op i32load8u (context address)
   (aref (wasm-context-memory context) address))
 
-(defun i32load8s (context address)
+(define-op i32load8s (context address)
   (ldb (byte 32 0) (sign-extend (aref (wasm-context-memory context) address) 8)))
 
-(defun i32load16u (context address)
+(define-op i32load16u (context address)
   (nibbles:ub16ref/le (wasm-context-memory context) address))
 
-(defun i32load16s (context address)
+(define-op i32load16s (context address)
   (ldb (byte 32 0) (sign-extend (nibbles:ub16ref/le (wasm-context-memory context) address) 16)))
 
-(defun i32store (context address value)
-  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) value))
+(define-op i32store (context address value)
+  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) value)
+  (values))
 
-(defun i32store8 (context address value)
-  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value)))
+(define-op i32store8 (context address value)
+  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value))
+  (values))
 
-(defun i32store16 (context address value)
-  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value)))
+(define-op i32store16 (context address value)
+  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value))
+  (values))
 
-(defun i64load (context address)
+(define-op i64load (context address)
   (nibbles:ub64ref/le (wasm-context-memory context) address))
 
-(defun i64load8u (context address)
+(define-op i64load8u (context address)
   (aref (wasm-context-memory context) address))
 
-(defun i64load8s (context address)
+(define-op i64load8s (context address)
   (ldb (byte 64 0) (sign-extend (aref (wasm-context-memory context) address) 8)))
 
-(defun i64load16u (context address)
+(define-op i64load16u (context address)
   (nibbles:ub16ref/le (wasm-context-memory context) address))
 
-(defun i64load16s (context address)
+(define-op i64load16s (context address)
   (ldb (byte 64 0) (sign-extend (nibbles:ub16ref/le (wasm-context-memory context) address) 16)))
 
-(defun i64load32u (context address)
+(define-op i64load32u (context address)
   (nibbles:ub32ref/le (wasm-context-memory context) address))
 
-(defun i64load32s (context address)
+(define-op i64load32s (context address)
   (ldb (byte 64 0) (sign-extend (nibbles:ub32ref/le (wasm-context-memory context) address) 32)))
 
-(defun i64store (context address value)
-  (setf (nibbles:ub64ref/le (wasm-context-memory context) address) value))
+(define-op i64store (context address value)
+  (setf (nibbles:ub64ref/le (wasm-context-memory context) address) value)
+  (values))
 
-(defun i64store8 (context address value)
-  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value)))
+(define-op i64store8 (context address value)
+  (setf (aref (wasm-context-memory context) address) (ldb (byte 8 0) value))
+  (values))
 
-(defun i64store16 (context address value)
-  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value)))
+(define-op i64store16 (context address value)
+  (setf (nibbles:ub16ref/le (wasm-context-memory context) address) (ldb (byte 16 0) value))
+  (values))
 
-(defun i64store32 (context address value)
-  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) (ldb (byte 32 0) value)))
+(define-op i64store32 (context address value)
+  (setf (nibbles:ub32ref/le (wasm-context-memory context) address) (ldb (byte 32 0) value))
+  (values))
 
 (define-conditional i32eqz (x) (eql (the i32 x) 0))
 (define-conditional i32eq (x y) (eql (the i32 x) (the i32 y)))
@@ -441,65 +449,94 @@
 (define-integer-binop i32or i32 nil logior)
 (define-integer-binop i32xor i32 nil logxor)
 (define-integer-binop i32shl i32 nil (lambda (x y) (ash x (logand y 31))))
-(define-integer-binop i32shru i32 nil (lambda (x y) (ash x (- (logand y 31)))))
-(define-integer-binop i32shrs i32 nil (lambda (x y) (ash (sign-extend x 32) (- (logand y 31)))))
+(define-integer-binop i32shru i32 nil (lambda (x y)
+                                        (the i32
+                                             (ash (the i32 x)
+                                                  (the (integer -31 0)
+                                                       (- (logand y 31)))))))
+(define-integer-binop i32shrs i32 nil (lambda (x y) (ash (sign-extend x 32)
+                                                         (- (logand y 31)))))
 
-(defun i32rotl (value count)
+(define-op i32rotl (value count)
   (setf count (logand 31 count))
   (logior (ldb (byte count (- 32 count)) value)
           (ash (ldb (byte (- 32 count) 0) value) count)))
 
-(defun i32rotr (value count)
+(define-op i32rotr (value count)
   (setf count (logand 31 count))
   (logior (ash value (- count))
           (ash (ldb (byte count 0) value) (- 32 count))))
 
-(defun i32clz (x)
+(define-op i32clz (x)
   (- 32 (integer-length x)))
 
-(defun i32ctz (x)
+(define-op i32ctz (x)
   (if (zerop x)
       32
       (1- (integer-length (logand x (- x))))))
 
-(defun i32popcnt (x)
+(define-op i32popcnt (x)
   (logcount (the i32 x)))
 
-(declaim (inline i32wrapi64))
-(defun i32wrapi64 (x)
+(define-op i32wrapi64 (x)
   (ldb (byte 32 0) x))
 
-(defun i32extend8s (x)
+(define-op i32extend8s (x)
   (ldb (byte 32 0) (sign-extend x 8)))
 
-(defun i32extend16s (x)
+(define-op i32extend16s (x)
   (ldb (byte 32 0) (sign-extend x 16)))
 
-(defun i32truncf32u (x)
+(define-op i32truncf32u (x)
   (ldb (byte 32 0) (truncate (the f32 x))))
 
-(defun i32truncf32s (x)
+(define-op i32truncf32s (x)
   (ldb (byte 32 0) (truncate (the f32 x))))
 
-(defun i32truncf64u (x)
+(define-op i32truncf64u (x)
   (ldb (byte 32 0) (truncate (the f64 x))))
 
-(defun i32truncf64s (x)
+(define-op i32truncf64s (x)
   (ldb (byte 32 0) (truncate (the f64 x))))
 
-(defun i32truncsatf32u (x)
-  (ldb (byte 32 0) (min (max 0 (truncate (the f32 x))) (1- (ash 1 32)))))
+(define-op i32truncsatf32u (x)
+  (ldb (byte 32 0)
+       (min (1- (ash 1 32))
+            (the fixnum
+                 (truncate
+                  (the f32
+                       (min (the f32 (max 0.0f0 (the f32 x)))
+                            (float (1- (ash 1 32)) 0.0f0))))))))
 
-(defun i32truncsatf32s (x)
-  (ldb (byte 32 0) (min (max (ash -1 31) (truncate (the f32 x))) (1- (ash 1 31)))))
+(define-op i32truncsatf32s (x)
+  (ldb (byte 32 0)
+       (the fixnum
+            (truncate
+             (the f32
+                  (min (the f32
+                            (max (float (ash -1 31) 0.0f0)
+                                 (the f32 x)))
+                       (float (1- (ash 1 31)) 0.0f0)))))))
 
-(defun i32truncsatf64u (x)
-  (ldb (byte 32 0) (min (max 0 (truncate (the f64 x))) (1- (ash 1 32)))))
+(define-op i32truncsatf64u (x)
+  (ldb (byte 32 0)
+       (the fixnum
+            (truncate
+             (the f64
+                  (min (the f64 (max 0.0d0 (the f64 x)))
+                       (float (1- (ash 1 32)) 0.0d0)))))))
 
-(defun i32truncsatf64s (x)
-  (ldb (byte 32 0) (min (max (ash -1 31) (truncate (the f64 x))) (1- (ash 1 31)))))
+(define-op i32truncsatf64s (x)
+  (ldb (byte 32 0)
+       (the fixnum
+            (truncate
+             (the f64
+                  (min (the f64
+                            (max (float (ash -1 31) 0.0d0)
+                                 (the f64 x)))
+                       (float (1- (ash 1 31)) 0.0d0)))))))
 
-(defun i32reinterpretf32 (x)
+(define-op i32reinterpretf32 (x)
   (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
     (setf (nibbles:ieee-single-ref/le tmp 0) x)
@@ -531,77 +568,78 @@
 (define-integer-binop i64shru i64 nil (lambda (x y) (ash x (- (logand y 63)))))
 (define-integer-binop i64shrs i64 nil (lambda (x y) (ash (sign-extend x 64) (- (logand y 63)))))
 
-(defun i64rotl (value count)
+(define-op i64rotl (value count)
   (setf count (logand 63 count))
   (logior (ldb (byte count (- 64 count)) value)
           (ash (ldb (byte (- 64 count) 0) value) count)))
 
-(defun i64rotr (value count)
+(define-op i64rotr (value count)
   (setf count (logand 63 count))
   (logior (ash value (- count))
           (ash (ldb (byte count 0) value) (- 64 count))))
 
-(defun i64clz (x)
+(define-op i64clz (x)
   (- 64 (integer-length x)))
 
-(defun i64ctz (x)
+(define-op i64ctz (x)
   (if (zerop x)
       64
       (1- (integer-length (logand x (- x))))))
 
-(defun i64popcnt (x)
+(define-op i64popcnt (x)
   (logcount (the i64 x)))
 
-(defun i64extend8s (x)
+(define-op i64extend8s (x)
   (ldb (byte 64 0) (sign-extend x 8)))
 
-(defun i64extend16s (x)
+(define-op i64extend16s (x)
   (ldb (byte 64 0) (sign-extend x 16)))
 
-(defun i64extend32s (x)
+(define-op i64extend32s (x)
   (ldb (byte 64 0) (sign-extend x 32)))
 
-(defun i64extendi32u (x)
+(define-op i64extendi32u (x)
   x)
 
-(defun i64extendi32s (x)
+(define-op i64extendi32s (x)
   (ldb (byte 64 0) (sign-extend x 32)))
 
-(defun i64truncf32u (x)
+(define-op i64truncf32u (x)
   (ldb (byte 64 0) (truncate (the f32 x))))
 
-(defun i64truncf32s (x)
+(define-op i64truncf32s (x)
   (ldb (byte 64 0) (truncate (the f32 x))))
 
-(defun i64truncf64u (x)
+(define-op i64truncf64u (x)
   (ldb (byte 64 0) (truncate (the f64 x))))
 
-(defun i64truncf64s (x)
+(define-op i64truncf64s (x)
   (ldb (byte 64 0) (truncate (the f64 x))))
 
-(defun i64truncsatf32u (x)
+(define-op i64truncsatf32u (x)
   (ldb (byte 64 0) (min (max 0 (truncate (the f32 x))) (1- (ash 1 64)))))
 
-(defun i64truncsatf32s (x)
+(define-op i64truncsatf32s (x)
   (ldb (byte 64 0) (min (max (ash -1 63) (truncate (the f32 x))) (1- (ash 1 63)))))
 
-(defun i64truncsatf64u (x)
+(define-op i64truncsatf64u (x)
   (ldb (byte 64 0) (min (max 0 (truncate (the f64 x))) (1- (ash 1 64)))))
 
-(defun i64truncsatf64s (x)
+(define-op i64truncsatf64s (x)
   (ldb (byte 64 0) (min (max (ash -1 63) (truncate (the f64 x))) (1- (ash 1 63)))))
 
-(defun i64reinterpretf64 (x)
+(define-op i64reinterpretf64 (x)
   (let ((tmp (make-array 8 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
     (setf (nibbles:ieee-double-ref/le tmp 0) x)
     (nibbles:ub64ref/le tmp 0)))
 
-(defun f32load (context address)
+(define-op f32load (context address)
   (nibbles:ieee-single-ref/le (wasm-context-memory context) address))
 
-(defun f32store (context address value)
-  (setf (nibbles:ieee-single-ref/le (wasm-context-memory context) address) value))
+(define-op f32store (context address value)
+  (setf (nibbles:ieee-single-ref/le (wasm-context-memory context) address) value)
+  (values))
 
 (define-conditional f32eq (x y) (eql (the f32 x) (the f32 y)))
 (define-conditional f32ne (x y) (not (eql (the f32 x) (the f32 y))))
@@ -615,7 +653,7 @@
 (define-float-binop f32div f32 /)
 (define-float-binop f32min f32 min)
 (define-float-binop f32max f32 max)
-(defun f32copysign (x y)
+(define-op f32copysign (x y)
   ;; TODO: Check for NaNs, the spec mandates this should preserve
   ;; the rest of the NaN, effectively making this a bit-twiddling op.
   (float-sign (the f32 y) (the f32 x)))
@@ -627,32 +665,33 @@
 (define-float-unop f32trunc f32 ftruncate)
 (define-float-unop f32nearest f32 fround)
 
-(defun f32converti32u (x)
+(define-op f32converti32u (x)
   (float (the i32 x) 0.0f0))
 
-(defun f32converti32s (x)
+(define-op f32converti32s (x)
   (float (sign-extend (the i32 x) 32) 0.0f0))
 
-(defun f32converti64u (x)
+(define-op f32converti64u (x)
   (float (the i64 x) 0.0f0))
 
-(defun f32converti64s (x)
+(define-op f32converti64s (x)
   (float (sign-extend (the i64 x) 64) 0.0f0))
 
-(defun f32reinterpreti32 (value)
+(define-op f32reinterpreti32 (value)
   (let ((tmp (make-array 4 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
     (setf (nibbles:ub32ref/le tmp 0) value)
     (nibbles:ieee-single-ref/le tmp 0)))
 
-(defun f32demotef64 (x)
+(define-op f32demotef64 (x)
   (float (the f64 x) 0.0f0))
 
-(defun f64load (context address)
+(define-op f64load (context address)
   (nibbles:ieee-double-ref/le (wasm-context-memory context) address))
 
-(defun f64store (context address value)
-  (setf (nibbles:ieee-double-ref/le (wasm-context-memory context) address) value))
+(define-op f64store (context address value)
+  (setf (nibbles:ieee-double-ref/le (wasm-context-memory context) address) value)
+  (values))
 
 (define-conditional f64eq (x y) (eql (the f64 x) (the f64 y)))
 (define-conditional f64ne (x y) (not (eql (the f64 x) (the f64 y))))
@@ -666,7 +705,7 @@
 (define-float-binop f64div f64 /)
 (define-float-binop f64min f64 min)
 (define-float-binop f64max f64 max)
-(defun f64copysign (x y)
+(define-op f64copysign (x y)
   ;; TODO: Check for NaNs, the spec mandates this should preserve
   ;; the rest of the NaN, effectively making this a bit-twiddling op.
   (float-sign (the f64 y) (the f64 x)))
@@ -678,25 +717,25 @@
 (define-float-unop f64trunc f64 ftruncate)
 (define-float-unop f64nearest f64 fround)
 
-(defun f64converti32u (x)
+(define-op f64converti32u (x)
   (float (the i32 x) 0.0d0))
 
-(defun f64converti32s (x)
+(define-op f64converti32s (x)
   (float (sign-extend (the i32 x) 32) 0.0d0))
 
-(defun f64converti64u (x)
+(define-op f64converti64u (x)
   (float (the i64 x) 0.0d0))
 
-(defun f64converti64s (x)
+(define-op f64converti64s (x)
   (float (sign-extend (the i64 x) 64) 0.0d0))
 
-(defun f64reinterpreti64 (value)
+(define-op f64reinterpreti64 (value)
   (let ((tmp (make-array 8 :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent tmp))
     (setf (nibbles:ub64ref/le tmp 0) value)
     (nibbles:ieee-double-ref/le tmp 0)))
 
-(defun f64promotef32 (x)
+(define-op f64promotef32 (x)
   (float (the f32 x) 0.0d0))
 
 ;; Exception handling (legacy wasm EH proposal)

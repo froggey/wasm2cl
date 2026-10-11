@@ -474,13 +474,20 @@ fn convert_function(
         output.push_str(&format!("  (declare {extra_declares})\n"));
     }
     // Local variable bindings.
-    // TODO: Type declarations.
     output.push_str("  (let (");
     for (i, (name, ty)) in all_locals.iter().skip(func.ty.params.len()).enumerate() {
         if i != 0 {
             output.push_str("\n        ");
         }
         output.push_str(&format!("({name} {})", initializer_for_type(*ty)));
+    }
+    output.push_str(")\n");
+    output.push_str("    (declare");
+    for (i, (name, ty)) in all_locals.iter().skip(func.ty.params.len()).enumerate() {
+        if i != 0 {
+            output.push_str("\n            ");
+        }
+        output.push_str(&format!(" (type {} {name})", convert_type(*ty)));
     }
     output.push_str(")\n");
 
