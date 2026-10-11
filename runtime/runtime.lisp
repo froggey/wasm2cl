@@ -449,13 +449,15 @@
 (define-integer-binop i32or i32 nil logior)
 (define-integer-binop i32xor i32 nil logxor)
 (define-integer-binop i32shl i32 nil (lambda (x y) (ash x (logand y 31))))
-(define-integer-binop i32shru i32 nil (lambda (x y)
-                                        (the i32
-                                             (ash (the i32 x)
-                                                  (the (integer -31 0)
-                                                       (- (logand y 31)))))))
-(define-integer-binop i32shrs i32 nil (lambda (x y) (ash (sign-extend x 32)
-                                                         (- (logand y 31)))))
+(define-integer-binop i32shru i32 nil
+  (lambda (x y)
+    (the i32
+         (ash (the i32 x)
+              (the (integer -31 0)
+                   (- (logand y 31)))))))
+(define-integer-binop i32shrs i32 nil
+  (lambda (x y) (ash (sign-extend x 32)
+                     (- (logand y 31)))))
 
 (define-op i32rotl (value count)
   (setf count (logand 31 count))
@@ -565,8 +567,18 @@
 (define-integer-binop i64or i64 nil logior)
 (define-integer-binop i64xor i64 nil logxor)
 (define-integer-binop i64shl i64 nil (lambda (x y) (ash x (logand y 63))))
-(define-integer-binop i64shru i64 nil (lambda (x y) (ash x (- (logand y 63)))))
-(define-integer-binop i64shrs i64 nil (lambda (x y) (ash (sign-extend x 64) (- (logand y 63)))))
+(define-integer-binop i64shru i64 nil
+  (lambda (x y)
+    (the i64
+         (ash (the i64 x)
+              (the (integer -63 0)
+                   (- (logand y 63)))))))
+(define-integer-binop i64shrs i64 nil
+  (lambda (x y)
+    (the (signed-byte 64)
+         (ash (sign-extend x 64)
+              (the (integer -63 0)
+                   (- (logand y 63)))))))
 
 (define-op i64rotl (value count)
   (setf count (logand 63 count))
